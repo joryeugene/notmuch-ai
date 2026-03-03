@@ -1,0 +1,329 @@
+"""
+CLI entrypoint.
+
+Commands:
+  classify   — classify new messages, apply AI tags
+  why        — explain why a message was tagged
+  draft      — generate a reply draft
+  rules      — manage and test rules
+  setup      — first-time setup (config, aerc queries, post-new hook)
+  log        — show recent classification decisions
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess as _sp
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
+from rich import print as rprint
+
+from notmuch_ai import classify as classify_mod, db, draft as draft_mod
+from notmuch_ai.rules import load_user_rules, RULES_FILE, CONFIG_DIR
+
+app = typer.Typer(
+    name="notmuch-ai",
+    help="AI intelligence layer for notmuch email.",
+    no_args_is_help=True,
+)
+console = Console()
+
+rules_app = typer.Typer(help="Manage and test classification rules.")
+app.add_typer(rules_app, name="rules")
+
+
+# ---------------------------------------------------------------------------
+# classify
+# ---------------------------------------------------------------------------
+
+@app.command()
+def classify(
+    query: str = typer.Option(
+        "tag:inbox AND NOT tag:ai-classified",
+        "--query", "-q",
+        help="Notmuch query to select messages for classification.",
+    ),
+    limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Max messages to process."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without applying tags."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show per-message decisions."),
+) -> None:
+    """Classify messages and apply AI tags (needs-reply, ai-noise, ai-urgent)."""
+    if dry_run:
+        rprint("[yellow]DRY RUN — no tags will be applied[/yellow]")
+
+    with console.status("Classifying messages..."):
+        report = classify_mod.classify_messages(
+            query=query,
+            limit=limit,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
+    rprint(
+        f"[green]Done.[/green] "
+        f"Processed: [bold]{report.processed}[/bold]  "
+        f"Tagged: [bold cyan]{report.tagged}[/bold cyan]  "
+        f"No match: {report.skipped}  "
+        f"Errors: [red]{report.errors}[/red]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# why
+# ---------------------------------------------------------------------------
+
+@app.command()
+def why(
+    message_id: str = typer.Argument(..., help="Notmuch message-id (with or without 'id:' prefix)."),
+) -> None:
+    """Explain why a message was tagged the way it was."""
+    decisions = db.why(message_id)
+    if not decisions:
+        rprint(f"[yellow]No classification history found for {message_id}[/yellow]")
+        raise typer.Exit(1)
+
+    table = Table(title=f"Classification history: {message_id}", show_lines=True)
+    table.add_column("Time", style="dim", width=24)
+    table.add_column("Rule", style="cyan")
+    table.add_column("Tags Added", style="green")
+    table.add_column("Reasoning")
+    table.add_column("Dry run", style="dim", width=8)
+
+    for d in decisions:
+        table.add_row(
+            d["ts"][:19],
+            d["rule"],
+            " ".join(d["tags_added"]) or "—",
+            d.get("llm_response") or d.get("condition") or "—",
+            "yes" if d["dry_run"] else "no",
+        )
+
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# draft
+# ---------------------------------------------------------------------------
+
+@app.command()
+def draft(
+    message_id: str = typer.Argument(..., help="Message-id of the email to reply to."),
+    context: str = typer.Option("", "--context", "-c", help="Additional context for the draft."),
+) -> None:
+    """Generate a reply draft and print it to stdout."""
+    try:
+        text = draft_mod.generate(message_id, context=context)
+        print(text)
+    except ValueError as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# log
+# ---------------------------------------------------------------------------
+
+@app.command()
+def log(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of recent decisions to show."),
+) -> None:
+    """Show recent AI classification decisions."""
+    decisions = db.recent(limit=limit)
+    if not decisions:
+        rprint("[yellow]No decisions logged yet.[/yellow]")
+        return
+
+    table = Table(title="Recent classifications", show_lines=False)
+    table.add_column("Time", style="dim", width=19)
+    table.add_column("Subject", max_width=40)
+    table.add_column("Rule", style="cyan", max_width=25)
+    table.add_column("Tags", style="green")
+    table.add_column("DR", style="dim", width=4)
+
+    for d in decisions:
+        table.add_row(
+            d["ts"][:19],
+            (d["subject"] or "")[:40],
+            d["rule"],
+            " ".join(d["tags_added"]) or "—",
+            "✓" if d["dry_run"] else "",
+        )
+
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# rules subcommands
+# ---------------------------------------------------------------------------
+
+@rules_app.command("list")
+def rules_list() -> None:
+    """Show all user-defined rules."""
+    user_rules = load_user_rules()
+    if not user_rules:
+        rprint(f"[yellow]No rules found.[/yellow] Create {RULES_FILE} to add rules.")
+        rprint("\nExample rule:")
+        rprint('[dim]  - name: "Sales pitch"[/dim]')
+        rprint('[dim]    condition: "Is this a sales or marketing email from someone I don\'t know?"[/dim]')
+        rprint('[dim]    action: tag add ai-cold-outreach[/dim]')
+        return
+
+    table = Table(title=f"User rules ({RULES_FILE})", show_lines=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Name", style="cyan")
+    table.add_column("Condition")
+    table.add_column("Action", style="green")
+
+    for i, r in enumerate(user_rules, 1):
+        parts = [f"+{t}" for t in r.action_add] + [f"-{t}" for t in r.action_remove]
+        action = " ".join(parts)
+        table.add_row(str(i), r.name, r.condition, action.strip())
+
+    console.print(table)
+
+
+@rules_app.command("check")
+def rules_check(
+    message_id: str = typer.Argument(..., help="Message-id to test rules against."),
+    verbose: bool = typer.Option(True, "--verbose/--quiet", help="Show reasoning."),
+) -> None:
+    """Test rules against a specific message (no tags applied)."""
+    from notmuch_ai import notmuch
+    from notmuch_ai.rules import evaluate
+
+    email = notmuch.show(message_id)
+    if not email:
+        rprint(f"[red]Message not found:[/red] {message_id}")
+        raise typer.Exit(1)
+
+    rprint(f"[bold]Checking:[/bold] {email.subject!r} from {email.from_addr}")
+    rprint()
+
+    matches = evaluate(
+        from_addr=email.from_addr,
+        subject=email.subject,
+        body=email.body_text,
+        tags=email.tags,
+    )
+
+    if not matches:
+        rprint("[yellow]No rules matched.[/yellow]")
+        return
+
+    for m in matches:
+        tags_str = " ".join(f"[green]+{t}[/green]" for t in m.tags.add)
+        tags_str += " ".join(f"[red]-{t}[/red]" for t in m.tags.remove)
+        rprint(f"  [cyan]{m.rule_name}[/cyan] → {tags_str}")
+        if verbose and m.reasoning:
+            rprint(f"    [dim]{m.reasoning}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# setup
+# ---------------------------------------------------------------------------
+
+@app.command()
+def setup() -> None:
+    """First-time setup: create config, aerc query files, post-new hook."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. Example rules.yaml
+    if not RULES_FILE.exists():
+        example = Path(__file__).parent.parent / "config" / "rules.example.yaml"
+        if example.exists():
+            shutil.copy(example, RULES_FILE)
+            rprint(f"[green]Created[/green] {RULES_FILE}")
+        else:
+            RULES_FILE.write_text(_EXAMPLE_RULES)
+            rprint(f"[green]Created[/green] {RULES_FILE}")
+    else:
+        rprint(f"[dim]Exists[/dim] {RULES_FILE}")
+
+    # 2. aerc query file (single key=value file, not a directory)
+    AI_QUERIES = {
+        "needs-reply": "tag:needs-reply AND NOT tag:replied AND NOT tag:deleted",
+        "ai-noise": "tag:ai-noise AND NOT tag:deleted",
+        "ai-urgent": "tag:ai-urgent AND NOT tag:deleted",
+    }
+
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    aerc_queries = Path(xdg) / "aerc" / "queries" if xdg else Path.home() / ".config" / "aerc" / "queries"
+    if not aerc_queries.is_file():
+        aerc_queries = Path.home() / "Library" / "Preferences" / "aerc" / "queries"
+
+    if aerc_queries.is_file():
+        existing = aerc_queries.read_text()
+        added: list[str] = []
+        for name, query in AI_QUERIES.items():
+            if f"{name} " not in existing and f"{name}=" not in existing:
+                existing = existing.rstrip("\n") + f"\n{name} = {query}\n"
+                added.append(name)
+        if added:
+            aerc_queries.write_text(existing)
+            rprint(f"[green]Added to[/green] {aerc_queries}: {', '.join(added)}")
+        else:
+            rprint(f"[dim]Already present[/dim] in {aerc_queries}")
+    else:
+        rprint(f"[yellow]aerc queries file not found[/yellow] — add these manually:")
+        for name, query in AI_QUERIES.items():
+            rprint(f"  {name} = {query}")
+
+    # 3. post-new hook — use notmuch's configured database path, not a hardcoded guess
+    try:
+        db_path = _sp.run(
+            ["notmuch", "config", "get", "database.path"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        hook_dir = Path(db_path) / ".notmuch" / "hooks" if db_path else Path.home() / ".mail" / ".notmuch" / "hooks"
+    except Exception:
+        hook_dir = Path.home() / ".mail" / ".notmuch" / "hooks"
+    hook_file = hook_dir / "post-new"
+    if hook_dir.exists():
+        if not hook_file.exists():
+            hook_file.write_text(_POST_NEW_HOOK)
+            hook_file.chmod(0o755)
+            rprint(f"[green]Created[/green] {hook_file}")
+        else:
+            rprint(f"[dim]Exists[/dim] {hook_file} — add this line if not present:")
+            rprint("  notmuch-ai classify")
+    else:
+        rprint(f"[yellow]Hook dir not found[/yellow] ({hook_dir}) — create it and add:")
+        rprint("  notmuch-ai classify")
+
+    rprint()
+    rprint("[bold green]Setup complete.[/bold green] Run [cyan]notmuch-ai classify --dry-run[/cyan] to test.")
+
+
+_EXAMPLE_RULES = """\
+# notmuch-ai rules
+# Conditions are evaluated by LLM. Be specific and natural.
+# Actions: "tag add <tag>" or "tag remove <tag>"
+# Optional static_from/static_subject for fast-path matching (no LLM).
+
+rules:
+  - name: "Cold outreach"
+    condition: "Is this a sales or marketing email from someone I don't know personally?"
+    action: tag add ai-cold-outreach
+    static_subject:
+      - "(?i)quick question"
+      - "(?i)partnership opportunity"
+
+  - name: "PR review request"
+    condition: "Is this asking me personally to review a pull request?"
+    action: tag add needs-reply
+
+  - name: "Interview or hiring"
+    condition: "Is this related to a job application, interview, or hiring decision that I need to act on?"
+    action: tag add ai-urgent
+"""
+
+_POST_NEW_HOOK = """\
+#!/usr/bin/env bash
+# notmuch post-new hook — AI classification
+notmuch-ai classify
+"""

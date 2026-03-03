@@ -1,0 +1,156 @@
+# notmuch-ai rules
+#
+# Conditions are evaluated by LLM — write them in plain English.
+# Actions: "tag add <tag>" or "tag remove <tag>"
+# static_from / static_subject: regex fast-paths — match without LLM (faster, cheaper).
+#
+# Tags used here are suggestions. Use whatever tags suit your workflow.
+# The three built-in tags (needs-reply, ai-noise, ai-urgent) run automatically
+# and don't need rules — add rules for everything beyond those.
+#
+# Copy to ~/.config/notmuch-ai/rules.yaml and customize.
+
+rules:
+
+  # ── High-signal inbound ──────────────────────────────────────────────────
+
+  - name: "PR review"
+    condition: "Is this asking me personally to review a pull request or give specific feedback on code changes?"
+    action: tag add needs-reply
+
+  - name: "Direct question from manager"
+    condition: "Is this from my manager or someone senior asking me a direct question or waiting on a decision from me?"
+    action: tag add needs-reply
+
+  - name: "Security alert"
+    condition: "Is this a genuine security alert — breach notification, unauthorized access, or account compromise — that requires immediate action?"
+    action: tag add ai-urgent
+    static_subject:
+      - "(?i)unauthorized access"
+      - "(?i)security (alert|breach|warning)"
+      - "(?i)your account has been"
+
+  - name: "Deadline or time-sensitive"
+    condition: "Does this email contain an explicit deadline within 48 hours, or a blocking request from an executive or investor?"
+    action: tag add ai-urgent
+
+
+  # ── Newsletters ──────────────────────────────────────────────────────────
+  # Recurring content you subscribed to. You want it, just not in your inbox.
+  # These emails don't need a reply and aren't urgent — archive them automatically.
+
+  - name: "Newsletter"
+    condition: "Is this a recurring newsletter, digest, or publication — regular content from a blog, substack, or mailing list I subscribed to?"
+    action: tag add ai-newsletter
+    static_from:
+      - "(?i)@substack\\.com"
+      - "(?i)@mg[0-9]*\\.substack\\.com"
+      - "(?i)@beehiiv\\.com"
+      - "(?i)@convertkit\\.com"
+      - "(?i)@mailchimp\\.com"
+      - "(?i)digest@"
+      - "(?i)newsletter@"
+      - "(?i)weekly@"
+
+  - name: "AI/tech digest"
+    condition: "Is this a curated AI, technology, or software industry newsletter or digest — regular content from a publication I subscribed to? Exclude: product update emails, service notifications, or automated alerts from software tools I use."
+    action: tag add ai-newsletter
+
+
+  # ── Marketing ────────────────────────────────────────────────────────────
+  # One-off promotional emails: sales, product launches, offers.
+  # Different from newsletters (which are recurring subscriptions).
+
+  - name: "Marketing"
+    condition: "Is this a promotional or marketing email — a product announcement, sale, special offer, or feature launch — not a newsletter I subscribed to?"
+    action: tag add ai-marketing
+    static_subject:
+      - "(?i)(sale|offer|discount|deal|promo|% off|limited time)"
+      - "(?i)(new feature|product launch|introducing|now available)"
+
+  - name: "SaaS onboarding / lifecycle"
+    condition: "Is this an automated onboarding, activation, or re-engagement email from a software product — tips, feature prompts, trial expiration warnings?"
+    action: tag add ai-marketing
+
+
+  # ── Cold outreach ─────────────────────────────────────────────────────────
+  # Unsolicited sales pitches, recruiter spam, partnership requests from strangers.
+  # Inbox Zero's rule: never block someone who has emailed you before.
+  # These are ONLY first-contact strangers with a sales/recruitment angle.
+
+  - name: "Cold outreach"
+    condition: >
+      Is this an unsolicited email from someone I have no prior relationship with,
+      who is trying to sell me something, recruit me for a job, or pitch a partnership?
+      Exclude: emails from investors, customers, conference contacts, people I've corresponded with before.
+    action: tag add ai-cold-outreach
+    static_subject:
+      - "(?i)(quick question|following up|checking in|circling back)"
+      - "(?i)(intro call|discovery call|15 minutes|hop on a call)"
+      - "(?i)(partnership opportunity|collaboration opportunity|mutual benefit)"
+      - "(?i)(excited to connect|reaching out to connect)"
+
+
+  # ── Transactional / receipts ─────────────────────────────────────────────
+  # Purchase confirmations, invoices, shipping updates — you need these for records
+  # but they don't belong in your inbox.
+
+  - name: "Receipt or invoice"
+    condition: "Is this a purchase confirmation, payment receipt, invoice, subscription renewal, or financial transaction record?"
+    action: tag add ai-receipt
+    static_subject:
+      - "(?i)(receipt|invoice|order confirmation|payment (received|confirmed|processed))"
+      - "(?i)(your (order|subscription|purchase|payment))"
+      - "(?i)(billing statement|statement of account)"
+
+  - name: "Shipping"
+    condition: "Is this a shipping notification, delivery update, or package tracking email?"
+    action: tag add ai-receipt
+    static_subject:
+      - "(?i)(shipped|out for delivery|delivered|package|tracking)"
+      - "(?i)(your order has|order #|order update)"
+
+
+  # ── Notifications ─────────────────────────────────────────────────────────
+  # System alerts, status updates, automated notifications from services.
+  # You might want to know, but no human is waiting for your reply.
+
+  - name: "GitHub notification"
+    condition: "Is this an automated GitHub notification — issue comment, PR update, CI result, or mention?"
+    action: tag add ai-notification
+    static_from:
+      - "notifications@github.com"
+      - "noreply@github.com"
+
+  - name: "Calendar / scheduling"
+    condition: "Is this a calendar invite, meeting update, RSVP confirmation, or scheduling notification?"
+    action: tag add ai-notification
+    static_from:
+      - "(?i)calendar-notification@google\\.com"
+      - "(?i)noreply@calendly\\.com"
+    static_subject:
+      - "(?i)(invitation|accepted|declined|canceled|rescheduled): "
+      - "(?i)calendar (event|reminder|invite)"
+
+  - name: "Monitoring alert"
+    condition: "Is this an automated monitoring, uptime, or deployment alert from a service like Datadog, PagerDuty, Sentry, or similar?"
+    action: tag add ai-notification
+    static_subject:
+      - "(?i)(alert|incident|triggered|resolved|degraded|outage)"
+      - "(?i)(sentry|pagerduty|datadog|opsgenie|grafana)"
+
+
+  # ── Custom: adapt to your workflow ───────────────────────────────────────
+  # Uncomment and customize these examples:
+
+  # - name: "VIP sender"
+  #   condition: "Is this from a key client, investor, or executive I should always see?"
+  #   action: tag add ai-vip
+
+  # - name: "Financial / legal"
+  #   condition: "Is this related to contracts, legal documents, taxes, or financial filings?"
+  #   action: tag add ai-important
+
+  # - name: "Recruiting pipeline"
+  #   condition: "Is this related to a job opening I posted or a candidate in my hiring pipeline?"
+  #   action: tag add needs-reply

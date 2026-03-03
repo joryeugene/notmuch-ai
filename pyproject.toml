@@ -1,0 +1,41 @@
+[project]
+name = "notmuch-ai"
+version = "0.1.0"
+description = "AI intelligence layer for notmuch email (aerc, neomutt, himalaya)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+homepage = "https://github.com/joryeugene/notmuch-ai"
+repository = "https://github.com/joryeugene/notmuch-ai"
+keywords = ["notmuch", "email", "ai", "aerc", "neomutt", "classification", "inbox-zero"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "anthropic>=0.84.0",
+    "litellm>=1.82.0",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+    "typer>=0.24.1",
+]
+
+[project.scripts]
+notmuch-ai = "notmuch_ai.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["notmuch_ai"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+]
