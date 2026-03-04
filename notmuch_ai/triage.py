@@ -159,7 +159,9 @@ def _render_panel(email: nm.Email, current_tag: str, reasoning: str, idx: int, t
 
 def _getchar_prompt() -> str:
     """Read a single keypress. Falls back to line input when stdin is not a tty."""
-    console.print("[dim][c] confirm  [r] reclassify  [s] skip  [q] quit[/dim]  [bold]▸[/bold] ", end="")
+    console.print("[c] confirm  [r] reclassify  [s] skip  [q] quit", markup=False)
+    console.print("[bold]▸[/bold] ", end="")
+    console.file.flush()
     if not sys.stdin.isatty():
         # Non-interactive (tests / piped input) — read a line
         line = sys.stdin.readline().strip().lower()
