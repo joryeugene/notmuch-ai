@@ -8,9 +8,9 @@ mbsync  →  notmuch new  →  notmuch-ai classify  →  aerc
 
 Three tags. No server. No web UI. Bring your own LLM key.
 
-- `needs-reply` — a real person wrote this to you and expects a response
-- `ai-noise` — auto-generated or marketing, no action needed
-- `ai-urgent` — deadline, time-sensitive, or from a senior stakeholder
+- `needs-reply`: a real person wrote this to you and expects a response
+- `ai-noise`: auto-generated or marketing, no action needed
+- `ai-urgent`: deadline, time-sensitive, or from a senior stakeholder
 
 Every decision is logged to SQLite. `notmuch-ai why <id>` tells you exactly why.
 
@@ -22,7 +22,7 @@ Cost: built-in classifiers use claude-haiku (~$3/month at 100 emails/day). Draft
 
 **Prerequisites:** notmuch configured and indexed, uv installed
 
-**Step 1 — Install:**
+**Step 1: Install**
 
 ```bash
 git clone https://github.com/joryeugene/notmuch-ai
@@ -31,14 +31,14 @@ just install
 # or: uv tool install --editable .
 ```
 
-**Step 2 — Set your API key:**
+**Step 2: Set your API key**
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 # add to ~/.zshrc or ~/.bashrc to persist
 ```
 
-**Step 3 — Run setup:**
+**Step 3: Run setup**
 
 ```bash
 notmuch-ai setup
@@ -113,7 +113,7 @@ rules:
     action: tag add needs-reply
 ```
 
-Conditions are plain English evaluated by LLM. `static_subject` and `static_from` are regex fast-paths that skip the LLM entirely — use them for high-volume, predictable patterns.
+Conditions are plain English evaluated by LLM. `static_subject` and `static_from` are regex fast-paths that skip the LLM entirely. Use them for high-volume, predictable patterns.
 
 ---
 
@@ -127,13 +127,17 @@ ai-noise    = tag:ai-noise AND NOT tag:deleted
 ai-urgent   = tag:ai-urgent AND NOT tag:deleted
 ```
 
-Draft generation from aerc — add to `~/.config/aerc/binds.conf` under `[messages]`:
+Draft generation from aerc. Add to `~/.config/aerc/binds.conf`:
 
 ```ini
-gD = :term notmuch-ai draft %{message-id}<Enter>
+[messages]
+gD = :pipe notmuch-ai draft -<Enter>
+
+[view]
+gd = :pipe -m notmuch-ai draft -<Enter>
 ```
 
-aerc expands `{{.MessageId}}` to the current message's ID before running the command.
+Use `gd` while reading an email, or `gD` from the message list. The draft prints to a pager. Nothing is sent.
 
 ---
 
@@ -164,7 +168,7 @@ Each component has one job and no dependencies on the others:
 
 | File | Job |
 |------|-----|
-| `notmuch.py` | subprocess wrapper — search, show, tag |
+| `notmuch.py` | subprocess wrapper: search, show, tag |
 | `llm.py` | prompt → structured response |
 | `rules.py` | email + rules → tag operations |
 | `classify.py` | orchestrate: fetch → evaluate → tag → log |

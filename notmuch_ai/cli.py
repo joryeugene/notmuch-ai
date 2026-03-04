@@ -112,10 +112,21 @@ def why(
 
 @app.command()
 def draft(
-    message_id: str = typer.Argument(..., help="Message-id of the email to reply to."),
+    message_id: str = typer.Argument(..., help="Message-id of the email to reply to. Use '-' to read Message-Id from stdin (aerc :pipe integration)."),
     context: str = typer.Option("", "--context", "-c", help="Additional context for the draft."),
 ) -> None:
     """Generate a reply draft and print it to stdout."""
+    import re
+    import sys
+
+    if message_id == "-":
+        raw = sys.stdin.read()
+        m = re.search(r"^[Mm]essage-[Ii][Dd]:\s*<?([^>\s\r\n]+)", raw, re.MULTILINE)
+        if not m:
+            rprint("[red]Error:[/red] Could not extract Message-Id from stdin")
+            raise typer.Exit(1)
+        message_id = m.group(1)
+
     try:
         text = draft_mod.generate(message_id, context=context)
         print(text)
