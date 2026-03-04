@@ -6,11 +6,15 @@ AI intelligence layer for notmuch email. Works with aerc, neomutt, himalaya, or 
 mbsync  →  notmuch new  →  notmuch-ai classify  →  aerc
 ```
 
-Three tags. No server. No web UI. Bring your own LLM key.
+Five tags, no server, no web UI. You provide the LLM key.
 
-- `needs-reply`: a real person wrote this to you and expects a response
-- `ai-noise`: auto-generated or marketing, no action needed
-- `ai-urgent`: deadline, time-sensitive, or from a senior stakeholder
+| Tag | Meaning |
+|-----|---------|
+| `needs-reply` | A real person wrote this and expects a response |
+| `ai-noise` | Auto-generated or marketing, no action needed |
+| `ai-urgent` | Deadline, time-sensitive, or from a senior stakeholder |
+| `ai-fyi` | Informational, genuine value, no reply needed |
+| `ai-follow-up` | Needs future attention, cannot act now |
 
 Every decision is logged to SQLite. `notmuch-ai why <id>` tells you exactly why.
 
@@ -20,7 +24,7 @@ Cost: built-in classifiers use claude-haiku (~$3/month at 100 emails/day). Draft
 
 ## Quickstart
 
-**Prerequisites:** notmuch configured and indexed, uv installed
+Requires notmuch configured and indexed, and uv installed.
 
 **Step 1: Install**
 
@@ -44,7 +48,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 notmuch-ai setup
 ```
 
-Creates `~/.config/notmuch-ai/rules.yaml` and appends the three AI virtual folders to your aerc queries file.
+This creates `~/.config/notmuch-ai/rules.yaml` and appends all five AI virtual folders to your aerc queries file.
 
 **Verify it works:**
 
@@ -95,6 +99,45 @@ notmuch-ai rules check id:abc123@mail.gmail.com
 
 ---
 
+## Triage: close the feedback loop
+
+Over time the classifier makes mistakes. `notmuch-ai triage` lets you review recent decisions one at a time and correct them:
+
+```
+$ notmuch-ai triage
+
+┌─ 1/8 ─────────────────────────────────────────────────────────┐
+│ From:    eng-announce@company.com                              │
+│ Subject: Q1 architecture review notes                          │
+│ Date:    2026-03-04 09:12                                      │
+│ Tag:     ai-noise                                              │
+│                                                                │
+│ Appears informational, no reply requested...                   │
+└────────────────────────────────────────────────────────────────┘
+▸
+```
+
+Press `c` to confirm, `r` to reclassify, `s` to skip, or `q` to quit.
+
+When you reclassify, you choose the correct tag from a numbered list. After the session, if you made two or more corrections, the LLM analyzes the pattern and proposes new rules:
+
+```
+Found 1 rule proposal:
+
+  company-announcements
+  ─────────────────────
+  name: company-announcements
+  condition: Is this a company-wide announcement from an internal
+    address that I should read but don't need to act on?
+  action: tag add ai-fyi
+
+  Add to rules.yaml? [y/n]
+```
+
+Approved rules are appended to `~/.config/notmuch-ai/rules.yaml` immediately.
+
+---
+
 ## Custom rules
 
 Edit `~/.config/notmuch-ai/rules.yaml`:
@@ -122,12 +165,14 @@ Conditions are plain English evaluated by LLM. `static_subject` and `static_from
 Virtual folders are added automatically by `notmuch-ai setup`. They appear in aerc's sidebar:
 
 ```ini
-needs-reply = tag:needs-reply AND NOT tag:replied AND NOT tag:deleted
-ai-noise    = tag:ai-noise AND NOT tag:deleted
-ai-urgent   = tag:ai-urgent AND NOT tag:deleted
+needs-reply  = tag:needs-reply AND NOT tag:replied AND NOT tag:deleted
+ai-noise     = tag:ai-noise AND NOT tag:deleted
+ai-urgent    = tag:ai-urgent AND NOT tag:deleted
+ai-fyi       = tag:ai-fyi AND NOT tag:deleted
+ai-follow-up = tag:ai-follow-up AND NOT tag:deleted
 ```
 
-Draft generation from aerc. Add to `~/.config/aerc/binds.conf`:
+To generate drafts from aerc, add this to `~/.config/aerc/binds.conf`:
 
 ```ini
 [messages]
@@ -172,8 +217,9 @@ Each component has one job and no dependencies on the others:
 | `llm.py` | prompt → structured response |
 | `rules.py` | email + rules → tag operations |
 | `classify.py` | orchestrate: fetch → evaluate → tag → log |
+| `triage.py` | interactive review: corrections → rule proposals |
 | `draft.py` | message-id → reply draft text |
-| `db.py` | append-only audit trail (SQLite) |
+| `db.py` | append-only audit trail + corrections (SQLite) |
 | `cli.py` | typer CLI, no business logic |
 
 No component knows about any other. Swap the LLM provider without touching the rules engine. Replace the audit trail without touching classify.

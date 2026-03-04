@@ -8,6 +8,7 @@ Commands:
   rules      — manage and test rules
   setup      — first-time setup (config, aerc queries, post-new hook)
   log        — show recent classification decisions
+  triage     — interactive review of recent classifications, propose new rules
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from rich.table import Table
 from rich import print as rprint
 
 from notmuch_ai import classify as classify_mod, db, draft as draft_mod
+import notmuch_ai.triage as triage_mod
 from notmuch_ai.rules import load_user_rules, RULES_FILE, CONFIG_DIR
 
 app = typer.Typer(
@@ -232,6 +234,18 @@ def rules_check(
         rprint(f"  [cyan]{m.rule_name}[/cyan] → {tags_str}")
         if verbose and m.reasoning:
             rprint(f"    [dim]{m.reasoning}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# triage
+# ---------------------------------------------------------------------------
+
+@app.command()
+def triage(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of recent decisions to review."),
+) -> None:
+    """Interactive review of recent classifications. Correct mistakes and auto-generate rules."""
+    triage_mod.run_triage_session(limit=limit)
 
 
 # ---------------------------------------------------------------------------

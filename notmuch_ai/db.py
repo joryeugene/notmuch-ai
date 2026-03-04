@@ -49,6 +49,15 @@ def _conn() -> sqlite3.Connection:
             dry_run     INTEGER DEFAULT 0
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS corrections (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            message_id  TEXT NOT NULL,
+            wrong_tag   TEXT NOT NULL,
+            correct_tag TEXT NOT NULL
+        )
+    """)
     conn.commit()
     return conn
 
@@ -98,6 +107,34 @@ def why(message_id: str) -> list[dict]:
             "llm_response": r[5],
             "dry_run": bool(r[6]),
         }
+        for r in rows
+    ]
+
+
+def log_correction(message_id: str, wrong_tag: str, correct_tag: str) -> None:
+    """Record a triage correction — user said wrong_tag should have been correct_tag."""
+    with closing(_conn()) as conn:
+        conn.execute(
+            "INSERT INTO corrections (ts, message_id, wrong_tag, correct_tag) VALUES (?, ?, ?, ?)",
+            (
+                datetime.now(timezone.utc).isoformat(),
+                message_id.lstrip("id:"),
+                wrong_tag,
+                correct_tag,
+            ),
+        )
+        conn.commit()
+
+
+def recent_corrections(limit: int = 50) -> list[dict]:
+    """Return most recent N triage corrections."""
+    with closing(_conn()) as conn:
+        rows = conn.execute(
+            "SELECT ts, message_id, wrong_tag, correct_tag FROM corrections ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        {"ts": r[0], "message_id": r[1], "wrong_tag": r[2], "correct_tag": r[3]}
         for r in rows
     ]
 

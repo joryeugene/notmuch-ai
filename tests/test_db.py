@@ -6,7 +6,7 @@ import pytest
 from pathlib import Path
 
 import notmuch_ai.db as db_module
-from notmuch_ai.db import Decision, log, why, recent
+from notmuch_ai.db import Decision, log, why, recent, log_correction, recent_corrections
 
 
 @pytest.fixture(autouse=True)
@@ -92,3 +92,50 @@ def test_db_created_automatically(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, "DB_PATH", nested)
     log(_decision())  # Should not raise — creates parent dirs
     assert nested.exists()
+
+
+# ---------------------------------------------------------------------------
+# corrections table
+# ---------------------------------------------------------------------------
+
+def test_log_correction_and_retrieve():
+    log_correction("msg1", wrong_tag="ai-noise", correct_tag="ai-fyi")
+    results = recent_corrections(limit=10)
+    assert len(results) == 1
+    assert results[0]["message_id"] == "msg1"
+    assert results[0]["wrong_tag"] == "ai-noise"
+    assert results[0]["correct_tag"] == "ai-fyi"
+
+
+def test_log_correction_strips_id_prefix():
+    log_correction("id:msg2", wrong_tag="ai-noise", correct_tag="needs-reply")
+    results = recent_corrections(limit=10)
+    assert results[0]["message_id"] == "msg2"
+
+
+def test_recent_corrections_newest_first():
+    log_correction("a", wrong_tag="ai-noise", correct_tag="ai-fyi")
+    log_correction("b", wrong_tag="ai-noise", correct_tag="ai-follow-up")
+    log_correction("c", wrong_tag="needs-reply", correct_tag="ai-fyi")
+    results = recent_corrections(limit=10)
+    assert results[0]["message_id"] == "c"
+
+
+def test_recent_corrections_respects_limit():
+    for i in range(5):
+        log_correction(f"msg{i}", wrong_tag="ai-noise", correct_tag="ai-fyi")
+    results = recent_corrections(limit=3)
+    assert len(results) == 3
+
+
+def test_recent_corrections_empty_when_none_logged():
+    results = recent_corrections(limit=10)
+    assert results == []
+
+
+def test_corrections_and_decisions_coexist():
+    """Both tables must share the same DB without interference."""
+    log(_decision(message_id="shared-msg"))
+    log_correction("shared-msg", wrong_tag="needs-reply", correct_tag="ai-fyi")
+    assert len(why("shared-msg")) == 1
+    assert len(recent_corrections(limit=10)) == 1

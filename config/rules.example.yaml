@@ -4,10 +4,14 @@
 # Actions: "tag add <tag>" or "tag remove <tag>"
 # static_from / static_subject: regex fast-paths — match without LLM (faster, cheaper).
 #
-# Tags used here are suggestions. Use whatever tags suit your workflow.
-# The three built-in tags (needs-reply, ai-noise, ai-urgent) run automatically
-# and don't need rules — add rules for everything beyond those.
+# Five built-in tags run automatically (no rules needed):
+#   needs-reply  — a real person expects your response
+#   ai-noise     — auto-generated, no human awaiting reply
+#   ai-urgent    — explicit deadline or C-level blocking request
+#   ai-fyi       — informational, genuine value, no action needed
+#   ai-follow-up — needs future attention, cannot act right now
 #
+# Add rules here for custom tags or to override built-in behavior.
 # Copy to ~/.config/notmuch-ai/rules.yaml and customize.
 
 rules:
@@ -138,6 +142,40 @@ rules:
     static_subject:
       - "(?i)(alert|incident|triggered|resolved|degraded|outage)"
       - "(?i)(sentry|pagerduty|datadog|opsgenie|grafana)"
+
+
+  # ── FYI: informational, no action ────────────────────────────────────────
+  # The built-in ai-fyi classifier handles most cases automatically.
+  # Add rules here for domains or patterns where you always want ai-fyi.
+
+  # - name: "Team announcements"
+  #   condition: "Is this a company or team-wide announcement I should read but don't need to act on?"
+  #   action: tag add ai-fyi
+  #   static_from:
+  #     - "(?i)announcements@"
+  #     - "(?i)eng-all@"
+  #     - "(?i)team-updates@"
+
+  # - name: "Meeting notes"
+  #   condition: "Is this a forwarded meeting summary, notes doc, or recap that I should read?"
+  #   action: tag add ai-fyi
+  #   static_subject:
+  #     - "(?i)(meeting notes|meeting recap|notes from|summary:)"
+
+
+  # ── Follow-up: needs future attention ────────────────────────────────────
+  # The built-in ai-follow-up classifier handles most cases automatically.
+  # Add rules here for known patterns in your workflow.
+
+  # - name: "Renewal reminders"
+  #   condition: "Is this a subscription, contract, or license renewal reminder that I need to act on before a future date?"
+  #   action: tag add ai-follow-up
+  #   static_subject:
+  #     - "(?i)(renewal|expires|expiring|renew before)"
+
+  # - name: "Waiting on approval"
+  #   condition: "Is this a response or status update on something I submitted that I'm waiting to hear back on?"
+  #   action: tag add ai-follow-up
 
 
   # ── Custom: adapt to your workflow ───────────────────────────────────────

@@ -11,6 +11,8 @@ Built-in rules (always evaluated, no config needed):
   - needs-reply: a real person wrote to you specifically and expects a response
   - ai-noise: auto-generated, newsletter — no human expects your response
   - ai-urgent: explicit deadline or C-level executive with blocking request
+  - ai-fyi: informational, genuine value but no action required
+  - ai-follow-up: needs future attention, cannot act right now
 """
 
 from __future__ import annotations
@@ -171,7 +173,7 @@ def _builtin_classify(
     recipient_pos: str = "unknown",
 ) -> list[RuleMatch]:
     """
-    Run the three built-in classifiers in a single LLM call for efficiency.
+    Run the five built-in classifiers in a single LLM call for efficiency.
     Skips tags already present on the message.
     """
     from notmuch_ai.llm import builtin_classify
@@ -179,6 +181,8 @@ def _builtin_classify(
     skip_needs_reply = "needs-reply" in existing_tags
     skip_noise = "ai-noise" in existing_tags
     skip_urgent = "ai-urgent" in existing_tags
+    skip_fyi = "ai-fyi" in existing_tags
+    skip_follow_up = "ai-follow-up" in existing_tags
 
     data = builtin_classify(
         from_addr=from_addr,
@@ -190,6 +194,8 @@ def _builtin_classify(
         skip_needs_reply=skip_needs_reply,
         skip_noise=skip_noise,
         skip_urgent=skip_urgent,
+        skip_fyi=skip_fyi,
+        skip_follow_up=skip_follow_up,
     )
 
     if not data:
@@ -224,6 +230,26 @@ def _builtin_classify(
                 rule_condition="explicit deadline within 24-48h or C-level/VP blocking request",
                 tags=TagOp(add=["ai-urgent"]),
                 reasoning=data.get("is_urgent_reason", ""),
+            )
+        )
+
+    if not skip_fyi and data.get("is_fyi"):
+        results.append(
+            RuleMatch(
+                rule_name="built-in: ai-fyi",
+                rule_condition="informational email with genuine value but no action or reply needed",
+                tags=TagOp(add=["ai-fyi"]),
+                reasoning=data.get("is_fyi_reason", ""),
+            )
+        )
+
+    if not skip_follow_up and data.get("is_follow_up"):
+        results.append(
+            RuleMatch(
+                rule_name="built-in: ai-follow-up",
+                rule_condition="needs future attention — cannot act right now or awaiting external input",
+                tags=TagOp(add=["ai-follow-up"]),
+                reasoning=data.get("is_follow_up_reason", ""),
             )
         )
 

@@ -99,15 +99,18 @@ def builtin_classify(
     skip_needs_reply: bool = False,
     skip_noise: bool = False,
     skip_urgent: bool = False,
+    skip_fyi: bool = False,
+    skip_follow_up: bool = False,
 ) -> dict:
     """
-    Run the three built-in classifiers in a single LLM call.
+    Run the five built-in classifiers in a single LLM call.
 
     Returns dict with keys: needs_reply, needs_reply_reason, is_noise,
-    is_noise_reason, is_urgent, is_urgent_reason.
+    is_noise_reason, is_urgent, is_urgent_reason, is_fyi, is_fyi_reason,
+    is_follow_up, is_follow_up_reason.
     Returns empty dict on parse failure (fail safe).
     """
-    if skip_needs_reply and skip_noise and skip_urgent:
+    if skip_needs_reply and skip_noise and skip_urgent and skip_fyi and skip_follow_up:
         return {}
 
     name_str = my_name or my_email or "the recipient"
@@ -134,7 +137,11 @@ Respond with JSON only:
   "is_noise": true or false,
   "is_noise_reason": "one sentence",
   "is_urgent": true or false,
-  "is_urgent_reason": "one sentence"
+  "is_urgent_reason": "one sentence",
+  "is_fyi": true or false,
+  "is_fyi_reason": "one sentence",
+  "is_follow_up": true or false,
+  "is_follow_up_reason": "one sentence"
 }}
 
 Definitions:
@@ -147,7 +154,16 @@ Definitions:
   needs_reply and is_noise CANNOT both be true.
 
 - is_urgent: Contains an explicit deadline within 24-48 hours, OR is from a C-level/VP-level executive with a blocking request.
-  "Please review when you get a chance" is NOT urgent."""
+  "Please review when you get a chance" is NOT urgent.
+
+- is_fyi: Informational email that {name_str} should be aware of but requires no action or reply.
+  Examples: company announcements, meeting notes forwarded, newsletters read for knowledge, team updates.
+  is_fyi and is_noise are mutually exclusive — noise is irrelevant, fyi has genuine value.
+  is_fyi and needs_reply CANNOT both be true.
+
+- is_follow_up: {name_str} needs to act on this but cannot do so right now — it should be revisited later.
+  Examples: requests with a future deadline, things waiting on external input, time-boxed decisions.
+  is_follow_up can be true alongside is_urgent (urgent but blocked)."""
 
     try:
         raw = _call(prompt).strip()
@@ -157,6 +173,63 @@ Definitions:
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
         # Fail safe: never apply tags on unparseable LLM output
         return {}
+
+
+def suggest_rules(corrections: list[dict]) -> list[dict]:
+    """
+    Analyze triage corrections and propose new YAML rules.
+
+    corrections: list of {message_id, wrong_tag, correct_tag, subject, from_addr}
+    Returns list of proposed rule dicts, each with: name, condition,
+    static_from (optional), static_subject (optional), action.
+    Returns empty list on parse failure (fail safe).
+    """
+    if not corrections:
+        return []
+
+    corrections_text = "\n".join(
+        f"- From: {c.get('from_addr', '?')} | Subject: {c.get('subject', '?')} "
+        f"| Was tagged: {c['wrong_tag']} | Should be: {c['correct_tag']}"
+        for c in corrections
+    )
+
+    prompt = f"""You are an email classification rule generator. A user corrected these email classifications:
+
+{corrections_text}
+
+Propose minimal YAML rules to prevent these misclassifications in the future.
+Look for patterns across multiple corrections (same sender domain, similar subject patterns).
+Prefer static_from/static_subject regex patterns over LLM conditions when the pattern is clear.
+
+Valid action tags: needs-reply, ai-urgent, ai-noise, ai-fyi, ai-follow-up
+
+Respond with JSON only — a list of rule objects:
+[
+  {{
+    "name": "short descriptive name",
+    "condition": "natural language condition for LLM (omit if using static patterns only)",
+    "static_from": ["regex pattern"],
+    "static_subject": ["regex pattern"],
+    "action": "tag add <tagname>"
+  }}
+]
+
+Rules:
+- Only include static_from or static_subject if the pattern is clear and specific
+- Omit keys that are empty or not needed
+- Generate at most 3 rules — prefer fewer, more specific rules
+- A single correction is rarely enough for a rule — only propose if you see a clear pattern"""
+
+    try:
+        raw = _call(prompt).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+        if not isinstance(result, list):
+            return []
+        return result
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return []
 
 
 def generate_draft(
@@ -209,7 +282,10 @@ def _call_anthropic(prompt: str, model: str) -> str:
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
-    return message.content[0].text
+    block = message.content[0]
+    if not hasattr(block, "text"):
+        return ""
+    return block.text  # type: ignore[union-attr]
 
 
 def _call_litellm(prompt: str, model: str) -> str:
@@ -220,4 +296,4 @@ def _call_litellm(prompt: str, model: str) -> str:
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
     )
-    return response.choices[0].message.content or ""
+    return response.choices[0].message.content or ""  # type: ignore[union-attr,index]
