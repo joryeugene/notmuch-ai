@@ -137,6 +137,12 @@ def tag(message_id: str, add: list[str] | None = None, remove: list[str] | None 
     _run(["tag"] + changes + [f"id:{mid}"])
 
 
+def list_tags() -> list[str]:
+    """Return all tags currently in the notmuch database, sorted."""
+    output = _run(["search", "--output=tags", "*"])
+    return sorted({line.strip() for line in output.splitlines() if line.strip()})
+
+
 def new() -> int:
     """Run notmuch new and return count of new messages."""
     output = _run(["new"])

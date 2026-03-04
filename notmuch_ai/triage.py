@@ -22,7 +22,26 @@ from notmuch_ai.llm import suggest_rules
 from notmuch_ai.rules import RULES_FILE
 
 
-VALID_TAGS = ["needs-reply", "ai-urgent", "ai-noise", "ai-fyi", "ai-follow-up"]
+_BUILTIN_TAGS = ["needs-reply", "ai-urgent", "ai-noise", "ai-fyi", "ai-follow-up"]
+
+# notmuch system/status tags — never meaningful as classification targets
+_SYSTEM_TAGS = frozenset({
+    "inbox", "unread", "replied", "deleted", "sent",
+    "attachment", "flagged", "draft", "passed", "ai-classified",
+})
+
+
+def _get_all_tags() -> list[str]:
+    """Return built-in tags + all tags in the notmuch DB, excluding system tags."""
+    try:
+        notmuch_tags = nm.list_tags()
+    except Exception:
+        notmuch_tags = []
+    custom = sorted(
+        t for t in notmuch_tags
+        if t not in _BUILTIN_TAGS and t not in _SYSTEM_TAGS
+    )
+    return _BUILTIN_TAGS + custom
 
 console = Console()
 
@@ -107,6 +126,7 @@ def run_triage_session(limit: int = 20) -> TriageReport:
             correct_tag = _prompt_reclassify(current_tag)
             if correct_tag and correct_tag != current_tag:
                 db.log_correction(mid, wrong_tag=current_tag, correct_tag=correct_tag)
+                nm.tag(mid, add=[correct_tag], remove=[current_tag])
                 corrections.append(_Correction(
                     message_id=mid,
                     wrong_tag=current_tag,
@@ -178,10 +198,12 @@ def _getchar_prompt() -> str:
 
 def _prompt_reclassify(current_tag: str) -> str | None:
     """Show tag menu, return chosen tag or None if cancelled."""
+    tags = _get_all_tags()
     console.print("\n  Reclassify as:")
-    for i, tag in enumerate(VALID_TAGS, 1):
+    for i, tag in enumerate(tags, 1):
         marker = " [dim](current)[/dim]" if tag == current_tag else ""
         console.print(f"  [cyan]{i}[/cyan]. {tag}{marker}")
+    console.print(f"  [cyan]{len(tags) + 1}[/cyan]. [dim]enter new tag...[/dim]")
     console.print("  [dim]0. cancel[/dim]")
     console.print("\n  [bold]▸[/bold] ", end="")
 
@@ -194,11 +216,18 @@ def _prompt_reclassify(current_tag: str) -> str | None:
         return None
     try:
         choice = int(line)
-        if 1 <= choice <= len(VALID_TAGS):
-            return VALID_TAGS[choice - 1]
+        if 1 <= choice <= len(tags):
+            return tags[choice - 1]
+        if choice == len(tags) + 1:
+            console.print("  New tag name: ", end="")
+            if not sys.stdin.isatty():
+                new_tag = sys.stdin.readline().strip()
+            else:
+                new_tag = input().strip()
+            return new_tag if new_tag else None
     except ValueError:
-        # Allow typing the tag name directly
-        if line in VALID_TAGS:
+        # Allow typing the tag name directly (existing or new)
+        if line:
             return line
     return None
 

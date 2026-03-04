@@ -7,7 +7,7 @@ import pytest
 
 import notmuch_ai.db as db_module
 import notmuch_ai.triage as triage_module
-from notmuch_ai.triage import run_triage_session, _append_rule, VALID_TAGS
+from notmuch_ai.triage import run_triage_session, _append_rule, _BUILTIN_TAGS, _get_all_tags
 from notmuch_ai.notmuch import Email
 
 
@@ -123,7 +123,10 @@ def test_triage_reclassify_logs_correction(mocker, monkeypatch):
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     mock_log = mocker.patch("notmuch_ai.triage.db.log_correction")
-    # r → reclassify, then choose option 4 (ai-fyi)
+    mock_tag = mocker.patch("notmuch_ai.triage.nm.tag")
+    # stub list_tags so _get_all_tags() returns a predictable list
+    mocker.patch("notmuch_ai.triage.nm.list_tags", return_value=[])
+    # r → reclassify, then choose option 4 (ai-fyi, 4th built-in)
     monkeypatch.setattr("sys.stdin", io.StringIO("r\n4\n"))
 
     report = run_triage_session(limit=1)
@@ -133,6 +136,7 @@ def test_triage_reclassify_logs_correction(mocker, monkeypatch):
         wrong_tag="ai-noise",
         correct_tag="ai-fyi",
     )
+    mock_tag.assert_called_once_with("test@example.com", add=["ai-fyi"], remove=["ai-noise"])
 
 
 def test_triage_reclassify_cancel_counts_as_skip(mocker, monkeypatch):
@@ -258,12 +262,33 @@ def test_append_rule_extends_existing_file(fake_rules_file, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# VALID_TAGS completeness
+# _BUILTIN_TAGS completeness
 # ---------------------------------------------------------------------------
 
-def test_valid_tags_contains_all_five():
-    assert "needs-reply" in VALID_TAGS
-    assert "ai-urgent" in VALID_TAGS
-    assert "ai-noise" in VALID_TAGS
-    assert "ai-fyi" in VALID_TAGS
-    assert "ai-follow-up" in VALID_TAGS
+def test_builtin_tags_contains_all_five():
+    assert "needs-reply" in _BUILTIN_TAGS
+    assert "ai-urgent" in _BUILTIN_TAGS
+    assert "ai-noise" in _BUILTIN_TAGS
+    assert "ai-fyi" in _BUILTIN_TAGS
+    assert "ai-follow-up" in _BUILTIN_TAGS
+
+
+def test_get_all_tags_includes_notmuch_tags(mocker):
+    mocker.patch(
+        "notmuch_ai.triage.nm.list_tags",
+        return_value=["ai-newsletter", "github", "inbox", "unread", "work", "needs-reply"],
+    )
+    tags = _get_all_tags()
+    assert "needs-reply" in tags
+    assert "ai-newsletter" in tags
+    assert "github" in tags
+    assert "work" in tags
+    assert "inbox" not in tags   # system tag filtered out
+    assert "unread" not in tags  # system tag filtered out
+    assert tags.index("needs-reply") < tags.index("ai-newsletter")  # builtins first
+
+
+def test_get_all_tags_falls_back_gracefully_when_notmuch_unavailable(mocker):
+    mocker.patch("notmuch_ai.triage.nm.list_tags", side_effect=Exception("notmuch not found"))
+    tags = _get_all_tags()
+    assert tags == _BUILTIN_TAGS  # falls back to built-ins only
