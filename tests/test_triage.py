@@ -149,6 +149,23 @@ def test_triage_reclassify_cancel_counts_as_skip(mocker, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# run_triage_session: unknown key loops until valid key received
+# ---------------------------------------------------------------------------
+
+def test_triage_unknown_key_loops_until_valid(mocker, monkeypatch):
+    """Unknown key must not advance to next email — loop re-prompts until valid key."""
+    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.why", return_value=[])
+    mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
+    # x is unknown, then c is confirm
+    monkeypatch.setattr("sys.stdin", io.StringIO("x\nc\n"))
+
+    report = run_triage_session(limit=1)
+    assert report.confirmed == 1
+    assert report.skipped == 0
+
+
+# ---------------------------------------------------------------------------
 # run_triage_session: deduplicate by message_id
 # ---------------------------------------------------------------------------
 

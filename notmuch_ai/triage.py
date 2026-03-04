@@ -70,7 +70,6 @@ def run_triage_session(limit: int = 20) -> TriageReport:
 
     total = len(unique)
     console.print(f"\n[bold]Triage:[/bold] reviewing [cyan]{total}[/cyan] recent classifications\n")
-    console.print("[dim]  [c] confirm  [r] reclassify  [s] skip  [q] quit[/dim]\n")
 
     for idx, decision in enumerate(unique, 1):
         mid = decision["message_id"]
@@ -89,7 +88,11 @@ def run_triage_session(limit: int = 20) -> TriageReport:
 
         _render_panel(email, current_tag, reasoning, idx, total)
 
-        key = _getchar_prompt()
+        while True:
+            key = _getchar_prompt()
+            if key in ("c", "r", "s", "q"):
+                break
+            console.print("[dim]  unknown key[/dim]\n")
 
         if key == "q":
             console.print("\n[dim]Quitting triage.[/dim]")
@@ -116,8 +119,6 @@ def run_triage_session(limit: int = 20) -> TriageReport:
             else:
                 report.skipped += 1
                 console.print("[dim]  → unchanged, skipped[/dim]\n")
-        else:
-            report.skipped += 1
 
         report.reviewed += 1
 
@@ -158,7 +159,7 @@ def _render_panel(email: nm.Email, current_tag: str, reasoning: str, idx: int, t
 
 def _getchar_prompt() -> str:
     """Read a single keypress. Falls back to line input when stdin is not a tty."""
-    console.print("[bold]▸[/bold] ", end="")
+    console.print("[dim][c] confirm  [r] reclassify  [s] skip  [q] quit[/dim]  [bold]▸[/bold] ", end="")
     if not sys.stdin.isatty():
         # Non-interactive (tests / piped input) — read a line
         line = sys.stdin.readline().strip().lower()
