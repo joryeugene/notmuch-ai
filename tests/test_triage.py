@@ -58,7 +58,7 @@ def fake_rules_file(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_triage_empty_when_no_decisions(mocker):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[])
     report = run_triage_session(limit=10)
     assert report.reviewed == 0
     assert report.confirmed == 0
@@ -70,7 +70,7 @@ def test_triage_empty_when_no_decisions(mocker):
 # ---------------------------------------------------------------------------
 
 def test_triage_confirm_increments_confirmed(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[{"llm_response": "noise email"}])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     monkeypatch.setattr("sys.stdin", io.StringIO("c\n"))
@@ -85,7 +85,7 @@ def test_triage_confirm_increments_confirmed(mocker, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_triage_skip_increments_skipped(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     monkeypatch.setattr("sys.stdin", io.StringIO("s\n"))
@@ -104,7 +104,7 @@ def test_triage_quit_stops_processing(mocker, monkeypatch):
         _fake_decision(message_id=f"msg{i}@x.com", subject=f"Email {i}")
         for i in range(5)
     ]
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=decisions)
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=decisions)
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     monkeypatch.setattr("sys.stdin", io.StringIO("q\n"))
@@ -119,7 +119,7 @@ def test_triage_quit_stops_processing(mocker, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_triage_reclassify_logs_correction(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     mock_log = mocker.patch("notmuch_ai.triage.db.log_correction")
@@ -140,7 +140,7 @@ def test_triage_reclassify_logs_correction(mocker, monkeypatch):
 
 
 def test_triage_reclassify_cancel_counts_as_skip(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     mocker.patch("notmuch_ai.triage.db.log_correction")
@@ -158,7 +158,7 @@ def test_triage_reclassify_cancel_counts_as_skip(mocker, monkeypatch):
 
 def test_triage_unknown_key_loops_until_valid(mocker, monkeypatch):
     """Unknown key must not advance to next email — loop re-prompts until valid key."""
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     # x is unknown, then c is confirm
@@ -179,7 +179,7 @@ def test_triage_deduplicates_message_ids(mocker, monkeypatch):
         _fake_decision(message_id="dup@x.com", rule="built-in: ai-noise"),
         _fake_decision(message_id="dup@x.com", rule="built-in: ai-urgent"),
     ]
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=decisions)
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=decisions)
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     show_mock = mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     monkeypatch.setattr("sys.stdin", io.StringIO("s\n"))
@@ -193,7 +193,7 @@ def test_triage_deduplicates_message_ids(mocker, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_triage_skips_missing_email(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=None)
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
@@ -208,7 +208,7 @@ def test_triage_skips_missing_email(mocker, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_triage_no_rule_proposal_with_one_correction(mocker, monkeypatch):
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=[_fake_decision()])
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     mocker.patch("notmuch_ai.triage.db.log_correction")
@@ -224,7 +224,7 @@ def test_triage_proposes_rules_after_two_corrections(mocker, monkeypatch):
         _fake_decision(message_id=f"m{i}@x.com", subject=f"Email {i}")
         for i in range(2)
     ]
-    mocker.patch("notmuch_ai.triage.db.recent", return_value=decisions)
+    mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=decisions)
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
     mocker.patch("notmuch_ai.triage.db.log_correction")

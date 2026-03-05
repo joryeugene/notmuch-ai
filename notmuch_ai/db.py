@@ -58,6 +58,14 @@ def _conn() -> sqlite3.Connection:
             correct_tag TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS triage_reviews (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts         TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            action     TEXT NOT NULL
+        )
+    """)
     conn.commit()
     return conn
 
@@ -135,6 +143,53 @@ def recent_corrections(limit: int = 50) -> list[dict]:
         ).fetchall()
     return [
         {"ts": r[0], "message_id": r[1], "wrong_tag": r[2], "correct_tag": r[3]}
+        for r in rows
+    ]
+
+
+def log_triage_review(message_id: str, action: str) -> None:
+    """Record that a message was reviewed in triage (confirmed/corrected/skipped)."""
+    with closing(_conn()) as conn:
+        conn.execute(
+            "INSERT INTO triage_reviews (ts, message_id, action) VALUES (?, ?, ?)",
+            (
+                datetime.now(timezone.utc).isoformat(),
+                message_id.lstrip("id:"),
+                action,
+            ),
+        )
+        conn.commit()
+
+
+def recent_untriaged(limit: int = 50) -> list[dict]:
+    """Return recent non-dry-run decisions not yet reviewed in triage.
+
+    A decision is considered triaged when triage_reviews contains a row for
+    that message_id with ts >= the decision's ts.  Re-classified emails get a
+    new decision row after the review, so they reappear in the next session.
+    """
+    with closing(_conn()) as conn:
+        rows = conn.execute(
+            """SELECT ts, message_id, subject, rule_name, tags_added
+               FROM decisions
+               WHERE dry_run = 0
+                 AND NOT EXISTS (
+                     SELECT 1 FROM triage_reviews r
+                     WHERE r.message_id = decisions.message_id
+                       AND r.ts >= decisions.ts
+                 )
+               ORDER BY id DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "ts": r[0],
+            "message_id": r[1],
+            "subject": r[2],
+            "rule": r[3],
+            "tags_added": json.loads(r[4] or "[]"),
+        }
         for r in rows
     ]
 

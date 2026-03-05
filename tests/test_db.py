@@ -6,7 +6,10 @@ import pytest
 from pathlib import Path
 
 import notmuch_ai.db as db_module
-from notmuch_ai.db import Decision, log, why, recent, log_correction, recent_corrections
+from notmuch_ai.db import (
+    Decision, log, why, recent, log_correction, recent_corrections,
+    log_triage_review, recent_untriaged,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -139,3 +142,63 @@ def test_corrections_and_decisions_coexist():
     log_correction("shared-msg", wrong_tag="needs-reply", correct_tag="ai-fyi")
     assert len(why("shared-msg")) == 1
     assert len(recent_corrections(limit=10)) == 1
+
+
+# ---------------------------------------------------------------------------
+# triage_reviews table
+# ---------------------------------------------------------------------------
+
+def test_recent_untriaged_returns_unreviewed_decisions():
+    log(_decision(message_id="unreviewed"))
+    results = recent_untriaged(limit=10)
+    assert len(results) == 1
+    assert results[0]["message_id"] == "unreviewed"
+
+
+def test_log_triage_review_removes_from_untriaged():
+    log(_decision(message_id="msg1"))
+    assert len(recent_untriaged(limit=10)) == 1
+    log_triage_review("msg1", action="confirmed")
+    assert recent_untriaged(limit=10) == []
+
+
+def test_log_triage_review_strips_id_prefix():
+    log(_decision(message_id="msg2"))
+    log_triage_review("id:msg2", action="skipped")
+    assert recent_untriaged(limit=10) == []
+
+
+def test_recent_untriaged_excludes_dry_run():
+    log(_decision(message_id="dry", dry_run=True))
+    log(_decision(message_id="real", dry_run=False))
+    results = recent_untriaged(limit=10)
+    assert len(results) == 1
+    assert results[0]["message_id"] == "real"
+
+
+def test_recent_untriaged_reappears_after_new_decision():
+    """After triage review, a new classification decision makes the email reappear."""
+    import time
+    log(_decision(message_id="reclassified"))
+    log_triage_review("reclassified", action="corrected")
+    assert recent_untriaged(limit=10) == []
+    # New decision logged after the review — email should reappear
+    time.sleep(0.01)  # ensure ts ordering
+    log(_decision(message_id="reclassified", rule_name="new-rule"))
+    results = recent_untriaged(limit=10)
+    assert len(results) == 1
+    assert results[0]["rule"] == "new-rule"
+
+
+def test_recent_untriaged_respects_limit():
+    for i in range(5):
+        log(_decision(message_id=f"msg{i}"))
+    results = recent_untriaged(limit=3)
+    assert len(results) == 3
+
+
+def test_recent_untriaged_empty_when_all_reviewed():
+    for i in range(3):
+        log(_decision(message_id=f"msg{i}"))
+        log_triage_review(f"msg{i}", action="skipped")
+    assert recent_untriaged(limit=10) == []

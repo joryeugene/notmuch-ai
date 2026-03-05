@@ -73,7 +73,7 @@ def run_triage_session(limit: int = 20) -> TriageReport:
     corrections: list[_Correction] = []
 
     # Deduplicate by message_id — one triage entry per email
-    decisions = db.recent(limit=limit)
+    decisions = db.recent_untriaged(limit=limit)
     seen: set[str] = set()
     unique: list[dict] = []
     for d in decisions:
@@ -96,6 +96,7 @@ def run_triage_session(limit: int = 20) -> TriageReport:
         # Fetch full email — skip if not found (deleted/moved)
         email = nm.show(mid)
         if email is None:
+            db.log_triage_review(mid, action="skipped")
             continue
 
         # Fetch most recent decision detail for reasoning
@@ -117,9 +118,11 @@ def run_triage_session(limit: int = 20) -> TriageReport:
             console.print("\n[dim]Quitting triage.[/dim]")
             break
         elif key == "s":
+            db.log_triage_review(mid, action="skipped")
             report.skipped += 1
             console.print("[dim]  → skipped[/dim]\n")
         elif key == "c":
+            db.log_triage_review(mid, action="confirmed")
             report.confirmed += 1
             console.print("[green]  → confirmed[/green]\n")
         elif key == "r":
@@ -134,9 +137,11 @@ def run_triage_session(limit: int = 20) -> TriageReport:
                     subject=email.subject or "",
                     from_addr=email.from_addr or "",
                 ))
+                db.log_triage_review(mid, action="corrected")
                 report.corrected += 1
                 console.print(f"[cyan]  → corrected:[/cyan] {current_tag} → {correct_tag}\n")
             else:
+                db.log_triage_review(mid, action="skipped")
                 report.skipped += 1
                 console.print("[dim]  → unchanged, skipped[/dim]\n")
 
