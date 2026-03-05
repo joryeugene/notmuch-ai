@@ -290,21 +290,40 @@ def _propose_rules(corrections: list[_Correction]) -> int:
 
 
 def _append_rule(rule: dict) -> None:
-    """Append a new rule dict to rules.yaml, creating the file if needed."""
+    """Append a new rule to rules.yaml without touching existing content.
+
+    Serializes only the new rule and appends raw text to the file.
+    The existing file is never parsed, so comments and formatting survive.
+    """
+    import re
+
     RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    if RULES_FILE.exists():
-        with open(RULES_FILE) as f:
-            data = yaml.safe_load(f) or {}
-    else:
-        data = {}
+    rule_yaml = yaml.dump(
+        [rule], default_flow_style=False, sort_keys=False, allow_unicode=True
+    )
 
-    rules_list: list = data.get("rules", [])
-    rules_list.append(rule)
-    data["rules"] = rules_list
+    if not RULES_FILE.exists():
+        indented = "\n".join(
+            f"  {line}" if line.strip() else "" for line in rule_yaml.splitlines()
+        )
+        RULES_FILE.write_text(f"rules:\n\n{indented}\n")
+        return
 
-    with open(RULES_FILE, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    content = RULES_FILE.read_text()
+
+    # Match the indent level of existing list items in the file
+    match = re.search(r"^( *)- ", content, re.MULTILINE)
+    indent = match.group(1) if match else "  "
+
+    indented = "\n".join(
+        f"{indent}{line}" if line.strip() else "" for line in rule_yaml.splitlines()
+    )
+
+    if not content.endswith("\n"):
+        content += "\n"
+    content += f"\n{indented}\n"
+    RULES_FILE.write_text(content)
 
 
 def _print_summary(report: TriageReport) -> None:

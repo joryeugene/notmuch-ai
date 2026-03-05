@@ -261,6 +261,30 @@ def test_append_rule_extends_existing_file(fake_rules_file, monkeypatch):
     assert data["rules"][1]["name"] == "new-rule"
 
 
+def test_append_rule_preserves_comments(fake_rules_file, monkeypatch):
+    monkeypatch.setattr(triage_module, "RULES_FILE", fake_rules_file)
+    original = (
+        "# My carefully written header\n"
+        "# with multiple comment lines\n"
+        "rules:\n"
+        "\n"
+        "  # -- High-signal inbound --\n"
+        "\n"
+        "  - name: existing-rule\n"
+        "    action: tag add ai-noise\n"
+    )
+    fake_rules_file.write_text(original)
+    _append_rule({"name": "new-rule", "action": "tag add ai-fyi"})
+    result = fake_rules_file.read_text()
+    assert "# My carefully written header" in result
+    assert "# with multiple comment lines" in result
+    assert "# -- High-signal inbound --" in result
+    assert "existing-rule" in result
+    import yaml
+    data = yaml.safe_load(result)
+    assert len(data["rules"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # _BUILTIN_TAGS completeness
 # ---------------------------------------------------------------------------
