@@ -66,9 +66,9 @@ notmuch-ai classify --dry-run --verbose
 Add to `~/.mail/.notmuch/hooks/post-new` (after all your existing notmuch tag rules):
 
 ```bash
-# AI classification: runs after all static rules
+# AI classification: new arrivals only
 if command -v notmuch-ai &>/dev/null; then
-  notmuch-ai classify
+  notmuch-ai classify --query "tag:new AND tag:inbox AND NOT tag:ai-classified"
 fi
 ```
 
@@ -76,13 +76,15 @@ fi
 chmod +x ~/.mail/.notmuch/hooks/post-new
 ```
 
-Every `notmuch new` (including mbsync) automatically classifies new mail. notmuch-ai runs only when mail arrives. It is not a daemon or background process.
+`tag:new` is applied by `notmuch new` to messages indexed in this sync. The hook sees only those messages, not your historical backlog. notmuch-ai runs only when mail arrives. It is not a daemon or background process.
+
+**Upgrading from an earlier version?** If your hook already has `notmuch-ai classify` with no arguments, add `--query "tag:new AND tag:inbox AND NOT tag:ai-classified"` to it. Without this flag, the hook classifies your entire unclassified inbox on every sync.
 
 ---
 
 ## Pause and resume
 
-Use `notmuch-ai pause` to stop AI classification without editing the hook manually. The pause survives reboots.
+Use `notmuch-ai pause` to stop all AI classification without editing the hook manually. The pause survives reboots. Use it when you want to take a break from classification entirely, test rule changes, or investigate unexpected tags.
 
 ```bash
 notmuch-ai pause    # stop classifying on next mail sync
@@ -96,24 +98,24 @@ notmuch-ai status   # show current state, backfill progress, and API key
 
 ## Backfilling an existing inbox
 
-If you have thousands of unclassified messages, process them in batches to stay within API rate limits.
+The post-new hook only classifies new arrivals. Historical messages that arrived before you installed notmuch-ai need a one-time backfill.
+
+**How it tracks progress.** Every processed message gets an `ai-classified` tag. The default backfill query is `tag:inbox AND NOT tag:ai-classified`, so each run picks up exactly where the last one left off. Messages are processed newest-first, so your recent inbox gets classified before older mail. If a batch is interrupted, no work is lost.
+
+The hook and backfill use separate queries and do not interfere with each other. You can run backfill batches while mail syncs normally.
 
 ```bash
 # Verify you are using your own API key before backfilling
 echo $ANTHROPIC_API_KEY
 
-# Preview the first 10 messages before touching anything
+# Preview the first 10 messages without applying any tags
 notmuch-ai classify --dry-run --verbose --limit 10
 
-# Pause automatic classification during manual backfill
-notmuch-ai pause
-
-# Classify in safe batches
+# Classify in batches (tags are applied to notmuch)
 notmuch-ai classify --limit 200
-notmuch-ai status   # check progress
+notmuch-ai status   # check progress: classified vs remaining
 
-# Repeat until "Remaining: 0", then resume
-notmuch-ai resume
+# Repeat until "Remaining: 0"
 ```
 
 ---

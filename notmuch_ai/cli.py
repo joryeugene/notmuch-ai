@@ -449,6 +449,6 @@ rules:
 
 _POST_NEW_HOOK = """\
 #!/usr/bin/env bash
-# notmuch post-new hook — AI classification
-notmuch-ai classify
+# notmuch post-new hook — classify new arrivals only
+notmuch-ai classify --query "tag:new AND tag:inbox AND NOT tag:ai-classified"
 """
