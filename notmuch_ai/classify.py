@@ -19,6 +19,7 @@ class ClassifyReport:
     tagged: int
     skipped: int
     errors: int
+    paused: bool = False
 
 
 def classify_messages(
@@ -33,6 +34,11 @@ def classify_messages(
     After classification, applies tag:ai-classified so messages aren't re-processed.
     Reads user identity once from notmuch config and forwards to the rules engine.
     """
+    from notmuch_ai.rules import CONFIG_DIR
+    pause_flag = CONFIG_DIR / ".paused"
+    if pause_flag.exists():
+        return ClassifyReport(processed=0, tagged=0, skipped=0, errors=0, paused=True)
+
     my_email = notmuch.get_user_email()
     my_name = notmuch.get_user_name()
 
@@ -62,6 +68,11 @@ def classify_messages(
                 print(f"  ERROR {mid}: {e}")
 
     return ClassifyReport(processed=processed, tagged=tagged, skipped=skipped, errors=errors)
+
+
+def count_unclassified(query: str = "tag:inbox AND NOT tag:ai-classified") -> int:
+    """Return the number of inbox messages not yet classified."""
+    return len(notmuch.search(query))
 
 
 def _classify_one(

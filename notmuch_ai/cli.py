@@ -66,6 +66,10 @@ def classify(
             verbose=verbose,
         )
 
+    if report.paused:
+        rprint("[yellow]AI classification is paused.[/yellow] Run [cyan]notmuch-ai resume[/cyan] to re-enable.")
+        return
+
     rprint(
         f"[green]Done.[/green] "
         f"Processed: [bold]{report.processed}[/bold]  "
@@ -251,6 +255,85 @@ def rules_check(
         rprint(f"  [cyan]{m.rule_name}[/cyan] → {tags_str}")
         if verbose and m.reasoning:
             rprint(f"    [dim]{m.reasoning}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# pause / resume / status
+# ---------------------------------------------------------------------------
+
+_PAUSE_FLAG = CONFIG_DIR / ".paused"
+
+
+@app.command()
+def pause() -> None:
+    """Pause AI classification. Survives reboots. Applies immediately on the next mail sync."""
+    _PAUSE_FLAG.touch()
+    rprint("[yellow]Paused.[/yellow] notmuch-ai will not classify until you run [cyan]notmuch-ai resume[/cyan].")
+
+
+@app.command()
+def resume() -> None:
+    """Resume AI classification after a pause."""
+    if _PAUSE_FLAG.exists():
+        _PAUSE_FLAG.unlink()
+        rprint("[green]Resumed.[/green] AI classification is active.")
+    else:
+        rprint("[dim]Already active.[/dim] notmuch-ai is not paused.")
+
+
+@app.command()
+def status() -> None:
+    """Show current classification state: progress, rules, model, and API key."""
+    paused = _PAUSE_FLAG.exists()
+
+    # --- classified / remaining ---
+    total_classified = db.count_classified()
+    unclassified_remaining = classify_mod.count_unclassified()
+    total = total_classified + unclassified_remaining
+    pct = int(total_classified / total * 100) if total else 0
+    bar_filled = pct // 5
+    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+
+    # --- last run ---
+    last_run = db.last_run_time()
+    last_run_str = last_run[:19].replace("T", " ") if last_run else "never"
+
+    # --- rules ---
+    user_rules = load_user_rules()
+
+    # --- model / provider ---
+    model = os.environ.get("NOTMUCH_AI_MODEL", "claude-haiku-4-5 (default)")
+
+    # --- API key ---
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        key_status = f"[green]set[/green] ({api_key[:8]}...)"
+    else:
+        key_status = "[red]not set[/red] (ANTHROPIC_API_KEY missing)"
+
+    # --- recent errors ---
+    recent_errors = db.count_recent_errors()
+
+    # --- render ---
+    state_str = "[red]PAUSED[/red]" if paused else "[green]active[/green]"
+    rprint(f"\n[bold]notmuch-ai status[/bold]")
+    rprint(f"  State:       {state_str}")
+    rprint(f"  Last run:    {last_run_str}")
+    rprint()
+    rprint(f"  [bold]Backfill progress[/bold]")
+    rprint(f"  [{bar}] {pct}%")
+    rprint(f"  Classified:  {total_classified:,}")
+    rprint(f"  Remaining:   {unclassified_remaining:,}")
+    rprint(f"  Total:       {total:,}")
+    rprint()
+    rprint(f"  Rules:       {len(user_rules)} user rules loaded from {RULES_FILE}")
+    rprint(f"  Model:       {model}")
+    rprint(f"  API key:     {key_status}")
+    rprint(f"  Errors (24h): {recent_errors}")
+    if paused:
+        rprint()
+        rprint(f"  Run [cyan]notmuch-ai resume[/cyan] to re-enable classification.")
+    rprint()
 
 
 # ---------------------------------------------------------------------------

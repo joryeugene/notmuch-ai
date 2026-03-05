@@ -194,6 +194,35 @@ def recent_untriaged(limit: int = 50) -> list[dict]:
     ]
 
 
+def count_classified() -> int:
+    """Return total number of distinct message-ids that have been classified (non-dry-run)."""
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT message_id) FROM decisions WHERE dry_run = 0"
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def last_run_time() -> str | None:
+    """Return ISO timestamp of the most recent non-dry-run classification, or None."""
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT MAX(ts) FROM decisions WHERE dry_run = 0"
+        ).fetchone()
+    return row[0] if row else None
+
+
+def count_recent_errors() -> int:
+    """Return number of error decisions logged in the last 24 hours."""
+    cutoff = datetime.now(timezone.utc).isoformat()[:10]  # YYYY-MM-DD
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE rule_name = 'error' AND ts >= ?",
+            (cutoff,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
 def recent(limit: int = 50) -> list[dict]:
     """Return most recent N decisions across all messages."""
     with closing(_conn()) as conn:

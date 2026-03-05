@@ -1,12 +1,14 @@
 # notmuch-ai
 
-AI intelligence layer for notmuch email. Works with aerc, neomutt, himalaya, or any notmuch-based setup.
+Your inbox is full of things an LLM already knows what to do with. notmuch-ai does that work. It classifies every incoming email, tags it, and exits. It has no server, no web UI, and no background process.
 
 ```
 mbsync  →  notmuch new  →  notmuch-ai classify  →  aerc
 ```
 
-Five tags, no server, no web UI. You provide the LLM key.
+Works with aerc, neomutt, himalaya, or any notmuch-based setup. You provide the API key.
+
+## Tags
 
 | Tag | Meaning |
 |-----|---------|
@@ -16,9 +18,11 @@ Five tags, no server, no web UI. You provide the LLM key.
 | `ai-fyi` | Informational, genuine value, no reply needed |
 | `ai-follow-up` | Needs future attention, cannot act now |
 
-Every decision is logged to SQLite. `notmuch-ai why <id>` tells you exactly why.
+Every decision is logged to SQLite. `notmuch-ai why <id>` tells you exactly why a message was tagged.
 
-Cost: built-in classifiers use claude-haiku (~$3/month at 100 emails/day). Drafts use claude-sonnet (only on demand).
+Cost: built-in classifiers use claude-haiku (~$3/month at 100 emails/day). Drafts use claude-sonnet and only run on demand.
+
+Other tools require a server, a web UI, or vendor lock-in. notmuch-ai is a Unix command. It runs when mail arrives, does its job, and exits. You own every piece: the rules, the tags, and the audit trail.
 
 ---
 
@@ -31,15 +35,14 @@ Requires notmuch configured and indexed, and uv installed.
 ```bash
 git clone https://github.com/joryeugene/notmuch-ai
 cd notmuch-ai
-just install
-# or: uv tool install --editable .
+uv tool install --editable .
 ```
 
 **Step 2: Set your API key**
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-# add to ~/.zshrc or ~/.bashrc to persist
+# Add to ~/.zshrc or ~/.bashrc to persist
 ```
 
 **Step 3: Run setup**
@@ -48,13 +51,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 notmuch-ai setup
 ```
 
-This creates `~/.config/notmuch-ai/rules.yaml` and appends all five AI virtual folders to your aerc queries file.
+This creates `~/.config/notmuch-ai/rules.yaml` and appends the five AI virtual folders to your aerc queries file.
 
 **Verify it works:**
 
 ```bash
-just dry-run
-# or: notmuch-ai classify --dry-run --verbose
+notmuch-ai classify --dry-run --verbose
 ```
 
 ---
@@ -74,28 +76,71 @@ fi
 chmod +x ~/.mail/.notmuch/hooks/post-new
 ```
 
-Now every `notmuch new` (including mbsync) automatically classifies new mail.
+Every `notmuch new` (including mbsync) automatically classifies new mail. notmuch-ai runs only when mail arrives. It is not a daemon or background process.
+
+---
+
+## Pause and resume
+
+Use `notmuch-ai pause` to stop AI classification without editing the hook manually. The pause survives reboots.
+
+```bash
+notmuch-ai pause    # stop classifying on next mail sync
+notmuch-ai resume   # re-enable
+notmuch-ai status   # show current state, backfill progress, and API key
+```
+
+`notmuch-ai status` shows how many messages have been classified, how many remain, and which rules and model are active. Use it to track backfill progress.
+
+---
+
+## Backfilling an existing inbox
+
+If you have thousands of unclassified messages, process them in batches to stay within API rate limits.
+
+```bash
+# Verify you are using your own API key before backfilling
+echo $ANTHROPIC_API_KEY
+
+# Preview the first 10 messages before touching anything
+notmuch-ai classify --dry-run --verbose --limit 10
+
+# Pause automatic classification during manual backfill
+notmuch-ai pause
+
+# Classify in safe batches
+notmuch-ai classify --limit 200
+notmuch-ai status   # check progress
+
+# Repeat until "Remaining: 0", then resume
+notmuch-ai resume
+```
 
 ---
 
 ## Daily workflow
 
 ```bash
+# Show current state: progress, rules, model, API key
+notmuch-ai status
+
+# Preview classification without applying any tags
+notmuch-ai classify --dry-run --verbose
+
 # Inspect recent decisions
-just audit
-# or: notmuch-ai log -n 50
+notmuch-ai log -n 50
 
 # Explain a specific decision
-just why <message-id>
-# or: notmuch-ai why id:abc123@mail.gmail.com
+notmuch-ai why id:abc123@mail.gmail.com
 
 # Generate a reply draft
-just draft <message-id>
-# or: notmuch-ai draft id:abc123@mail.gmail.com
+notmuch-ai draft id:abc123@mail.gmail.com
 
 # Test rules against a specific message (no tags applied)
 notmuch-ai rules check id:abc123@mail.gmail.com
 ```
+
+`--dry-run` shows every classification decision without writing any tags to notmuch. `--verbose` adds per-message reasoning from the LLM. Run both together before your first real classify to confirm the rules are doing what you expect.
 
 ---
 
@@ -156,7 +201,7 @@ rules:
     action: tag add needs-reply
 ```
 
-Conditions are plain English evaluated by LLM. `static_subject` and `static_from` are regex fast-paths that skip the LLM entirely. Use them for high-volume, predictable patterns.
+Conditions are plain English evaluated by the LLM. `static_subject` and `static_from` are regex fast-paths that skip the LLM entirely. Use them for high-volume, predictable patterns.
 
 ---
 
@@ -172,7 +217,7 @@ ai-fyi       = tag:ai-fyi AND NOT tag:deleted
 ai-follow-up = tag:ai-follow-up AND NOT tag:deleted
 ```
 
-To generate drafts from aerc, add this to `~/.config/aerc/binds.conf`:
+To generate drafts from aerc, add this to `binds.conf`:
 
 ```ini
 [messages]
@@ -188,7 +233,7 @@ Use `gd` while reading an email, or `gD` from the message list. The draft prints
 
 ## Alternative LLM providers
 
-Default is Anthropic (haiku for classification, sonnet for drafts). To use a different provider, set `NOTMUCH_AI_MODEL` to any [litellm-compatible model](https://docs.litellm.ai/docs/providers):
+The default is Anthropic (haiku for classification, sonnet for drafts). To use a different provider, set `NOTMUCH_AI_MODEL` to any [litellm-compatible model](https://docs.litellm.ai/docs/providers):
 
 ```bash
 export NOTMUCH_AI_MODEL=gpt-4o-mini    # OpenAI
@@ -214,13 +259,13 @@ Each component has one job and no dependencies on the others:
 | File | Job |
 |------|-----|
 | `notmuch.py` | subprocess wrapper: search, show, tag |
-| `llm.py` | prompt → structured response |
-| `rules.py` | email + rules → tag operations |
-| `classify.py` | orchestrate: fetch → evaluate → tag → log |
-| `triage.py` | interactive review: corrections → rule proposals |
-| `draft.py` | message-id → reply draft text |
-| `db.py` | append-only audit trail + corrections (SQLite) |
-| `cli.py` | typer CLI, no business logic |
+| `llm.py` | prompt to structured response |
+| `rules.py` | email plus rules to tag operations |
+| `classify.py` | orchestrate: fetch, evaluate, tag, log |
+| `triage.py` | interactive review: corrections to rule proposals |
+| `draft.py` | message-id to reply draft text |
+| `db.py` | append-only audit trail and corrections (SQLite) |
+| `cli.py` | Typer CLI, no business logic |
 
 No component knows about any other. Swap the LLM provider without touching the rules engine. Replace the audit trail without touching classify.
 
