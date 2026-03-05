@@ -316,3 +316,28 @@ def test_get_all_tags_falls_back_gracefully_when_notmuch_unavailable(mocker):
     mocker.patch("notmuch_ai.triage.nm.list_tags", side_effect=Exception("notmuch not found"))
     tags = _get_all_tags()
     assert tags == _BUILTIN_TAGS  # falls back to built-ins only
+
+
+# ---------------------------------------------------------------------------
+# _append_rule roundtrip with load_user_rules
+# ---------------------------------------------------------------------------
+
+def test_append_rule_roundtrip_static_only(fake_rules_file, monkeypatch):
+    """Static-only rule survives append then load_user_rules() roundtrip."""
+    import notmuch_ai.rules as rules_module
+    monkeypatch.setattr(triage_module, "RULES_FILE", fake_rules_file)
+    monkeypatch.setattr(rules_module, "RULES_FILE", fake_rules_file)
+
+    _append_rule({
+        "name": "GitHub noise",
+        "action": "tag add ai-notification",
+        "static_from": ["notifications@github.com"],
+    })
+
+    from notmuch_ai.rules import load_user_rules
+    rules = load_user_rules()
+    assert len(rules) == 1
+    assert rules[0].name == "GitHub noise"
+    assert rules[0].condition == ""
+    assert rules[0].static_from == ["notifications@github.com"]
+    assert rules[0].action_add == ["ai-notification"]

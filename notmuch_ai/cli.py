@@ -189,13 +189,30 @@ def rules_list() -> None:
     table = Table(title=f"User rules ({RULES_FILE})", show_lines=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Name", style="cyan")
-    table.add_column("Condition")
+    table.add_column("Type", style="yellow", width=7)
+    table.add_column("Condition / Patterns")
     table.add_column("Action", style="green")
 
     for i, r in enumerate(user_rules, 1):
+        has_patterns = bool(r.static_from or r.static_subject)
+        if has_patterns and r.condition:
+            rule_type = "hybrid"
+        elif has_patterns:
+            rule_type = "static"
+        else:
+            rule_type = "LLM"
+
+        detail_lines = []
+        if r.condition:
+            detail_lines.append(r.condition)
+        for p in r.static_from:
+            detail_lines.append(f"[dim]from: {p}[/dim]")
+        for p in r.static_subject:
+            detail_lines.append(f"[dim]subj: {p}[/dim]")
+
         parts = [f"+{t}" for t in r.action_add] + [f"-{t}" for t in r.action_remove]
         action = " ".join(parts)
-        table.add_row(str(i), r.name, r.condition, action.strip())
+        table.add_row(str(i), r.name, rule_type, "\n".join(detail_lines), action.strip())
 
     console.print(table)
 

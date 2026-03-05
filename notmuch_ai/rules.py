@@ -46,9 +46,9 @@ class RuleMatch:
 @dataclass
 class UserRule:
     name: str
-    condition: str
-    action_add: list[str]
-    action_remove: list[str]
+    action_add: list[str] = field(default_factory=list)
+    action_remove: list[str] = field(default_factory=list)
+    condition: str = ""
     # Optional static fast-path: skip LLM if these match
     static_from: list[str] = field(default_factory=list)
     static_subject: list[str] = field(default_factory=list)
@@ -79,7 +79,7 @@ def load_user_rules() -> list[UserRule]:
         rules.append(
             UserRule(
                 name=r["name"],
-                condition=r["condition"],
+                condition=r.get("condition", ""),
                 action_add=add_tags,
                 action_remove=remove_tags,
                 static_from=r.get("static_from", []),
@@ -92,11 +92,17 @@ def load_user_rules() -> list[UserRule]:
 def _static_match(rule: UserRule, from_addr: str, subject: str) -> bool:
     """Check static conditions (no LLM). Returns True if any pattern matches."""
     for pattern in rule.static_from:
-        if re.search(pattern, from_addr, re.IGNORECASE):
-            return True
+        try:
+            if re.search(pattern, from_addr, re.IGNORECASE):
+                return True
+        except re.error:
+            continue
     for pattern in rule.static_subject:
-        if re.search(pattern, subject, re.IGNORECASE):
-            return True
+        try:
+            if re.search(pattern, subject, re.IGNORECASE):
+                return True
+        except re.error:
+            continue
     return False
 
 
@@ -135,12 +141,16 @@ def evaluate(
                 matches.append(
                     RuleMatch(
                         rule_name=rule.name,
-                        rule_condition="static: " + rule.condition,
+                        rule_condition=f"static: {rule.name}",
                         tags=TagOp(add=rule.action_add, remove=rule.action_remove),
                         reasoning="matched static pattern",
                     )
                 )
                 continue
+
+        # Static-only rules with no condition have no LLM fallback
+        if not rule.condition:
+            continue
 
         # LLM path
         if skip_llm:

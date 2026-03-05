@@ -168,3 +168,78 @@ def test_evaluate_builtin_noise(mocker, monkeypatch):
     )
     assert len(matches) == 1
     assert "ai-noise" in matches[0].tags.add
+
+
+# ---------------------------------------------------------------------------
+# static-only rules (no condition key)
+# ---------------------------------------------------------------------------
+
+STATIC_ONLY_YAML = """
+rules:
+  - name: "GitHub noise"
+    action: tag add ai-notification
+    static_from:
+      - "notifications@github.com"
+      - "noreply@github.com"
+"""
+
+
+def test_static_only_rule_loads(tmp_path, monkeypatch):
+    """Rule with no condition key loads with condition=''."""
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(STATIC_ONLY_YAML)
+    monkeypatch.setattr(rules_module, "RULES_FILE", rules_file)
+    rules = load_user_rules()
+    assert len(rules) == 1
+    assert rules[0].name == "GitHub noise"
+    assert rules[0].condition == ""
+    assert rules[0].action_add == ["ai-notification"]
+    assert rules[0].static_from == ["notifications@github.com", "noreply@github.com"]
+
+
+def test_static_only_rule_matches(tmp_path, monkeypatch, mocker):
+    """Static-only rule matches on from_addr, LLM never called."""
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(STATIC_ONLY_YAML)
+    monkeypatch.setattr(rules_module, "RULES_FILE", rules_file)
+    mocker.patch("notmuch_ai.rules._builtin_classify", return_value=[])
+    mock_llm = mocker.patch("notmuch_ai.llm.classify_condition")
+
+    matches = evaluate(
+        from_addr="notifications@github.com",
+        subject="[repo] New PR #42",
+        body="Review requested...",
+        tags=[],
+    )
+    mock_llm.assert_not_called()
+    assert len(matches) == 1
+    assert matches[0].rule_name == "GitHub noise"
+    assert matches[0].tags.add == ["ai-notification"]
+
+
+def test_static_only_rule_no_match_skips_llm(tmp_path, monkeypatch, mocker):
+    """Static-only rule that doesn't match skips LLM (no condition to send)."""
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(STATIC_ONLY_YAML)
+    monkeypatch.setattr(rules_module, "RULES_FILE", rules_file)
+    mocker.patch("notmuch_ai.rules._builtin_classify", return_value=[])
+    mock_llm = mocker.patch("notmuch_ai.llm.classify_condition")
+
+    matches = evaluate(
+        from_addr="boss@company.com",
+        subject="Meeting tomorrow",
+        body="Let's sync up",
+        tags=[],
+    )
+    mock_llm.assert_not_called()
+    assert matches == []
+
+
+def test_bad_regex_in_static_pattern():
+    """Malformed regex in static patterns skips that pattern instead of crashing."""
+    rule = UserRule(
+        name="bad-regex", action_add=["test"],
+        static_from=[r"[invalid(regex"],
+        static_subject=[r"(?P<broken"],
+    )
+    assert _static_match(rule, "anything@example.com", "any subject") is False
