@@ -1,13 +1,13 @@
 [project]
 name = "notmuch-ai"
-version = "0.3.0"
-description = "AI intelligence layer for notmuch email (aerc, neomutt, himalaya)"
+version = "0.4.0"
+description = "AI intelligence layer for notmuch email. Works with Anthropic API or Claude Code subscription."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 homepage = "https://github.com/joryeugene/notmuch-ai"
 repository = "https://github.com/joryeugene/notmuch-ai"
-keywords = ["notmuch", "email", "ai", "aerc", "neomutt", "classification", "inbox-zero"]
+keywords = ["notmuch", "email", "ai", "aerc", "neomutt", "classification", "inbox-zero", "claude-code", "claude-cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",

@@ -6,7 +6,7 @@ Your inbox is full of things an LLM already knows what to do with. notmuch-ai do
 mbsync  →  notmuch new  →  notmuch-ai classify  →  aerc
 ```
 
-Works with aerc, neomutt, himalaya, or any notmuch-based setup. You provide the API key.
+Works with aerc, neomutt, himalaya, or any notmuch-based setup. Uses an Anthropic API key for speed (~1s/email), or works with just a Claude Code subscription (no API key needed, ~5-10s/email). Falls back to static regex rules when neither is available.
 
 ## Tags
 
@@ -19,8 +19,6 @@ Works with aerc, neomutt, himalaya, or any notmuch-based setup. You provide the 
 | `ai-follow-up` | Needs future attention, cannot act now |
 
 Every decision is logged to SQLite. `notmuch-ai why <id>` tells you exactly why a message was tagged.
-
-Cost: built-in classifiers use claude-haiku (~$3/month at 100 emails/day). Drafts use claude-sonnet and only run on demand.
 
 Other tools require a server, a web UI, or vendor lock-in. notmuch-ai is a Unix command. It runs when mail arrives, does its job, and exits. You own every piece: the rules, the tags, and the audit trail.
 
@@ -38,11 +36,15 @@ cd notmuch-ai
 uv tool install --editable .
 ```
 
-**Step 2: Set your API key**
+**Step 2: Choose your provider**
 
 ```bash
+# Option A: Anthropic API key (fast, ~1s per email)
 export ANTHROPIC_API_KEY=sk-ant-...
 # Add to ~/.zshrc or ~/.bashrc to persist
+
+# Option B: Skip this step if you have Claude Code installed
+# notmuch-ai detects the claude CLI and uses it automatically (~5-10s per email)
 ```
 
 **Step 3: Run setup**
@@ -89,7 +91,7 @@ Use `notmuch-ai pause` to stop all AI classification without editing the hook ma
 ```bash
 notmuch-ai pause    # stop classifying on next mail sync
 notmuch-ai resume   # re-enable
-notmuch-ai status   # show current state, backfill progress, and API key
+notmuch-ai status   # show current state, backfill progress, and provider
 ```
 
 `notmuch-ai status` shows how many messages have been classified, how many remain, and which rules and model are active. Use it to track backfill progress.
@@ -105,18 +107,17 @@ The post-new hook only classifies new arrivals. Historical messages that arrived
 The hook and backfill use separate queries and do not interfere with each other. You can run backfill batches while mail syncs normally.
 
 ```bash
-# Verify you are using your own API key before backfilling
-echo $ANTHROPIC_API_KEY
-
-# Preview the first 10 messages without applying any tags
+# Preview the 10 most recent unclassified messages without applying tags
 notmuch-ai classify --dry-run --verbose --limit 10
 
-# Classify in batches (tags are applied to notmuch)
-notmuch-ai classify --limit 200
+# Classify in batches with parallel LLM calls (3-5 workers recommended)
+notmuch-ai classify --limit 200 --workers 3
 notmuch-ai status   # check progress: classified vs remaining
 
 # Repeat until "Remaining: 0"
 ```
+
+`--limit 200` processes the 200 most recent unclassified emails. Each run picks up where the last left off because classified messages get an `ai-classified` tag and drop out of the next query. `--workers 3` runs 3 LLM calls in parallel while keeping tag writes sequential.
 
 ---
 
@@ -233,9 +234,21 @@ Use `gd` while reading an email, or `gD` from the message list. The draft prints
 
 ---
 
-## Alternative LLM providers
+## Provider modes
 
-The default is Anthropic (haiku for classification, sonnet for drafts). To use a different provider, set `NOTMUCH_AI_MODEL` to any [litellm-compatible model](https://docs.litellm.ai/docs/providers):
+notmuch-ai auto-detects the best available provider on every run. No configuration needed beyond setting (or not setting) an API key.
+
+| Mode | Requirement | Speed | Cost |
+|------|------------|-------|------|
+| Anthropic API | `ANTHROPIC_API_KEY` set | ~1s/email | ~$3/mo at 100 emails/day |
+| Claude CLI | Claude Code installed, no API key | ~5-10s/email | Included in subscription |
+| Static-only | Neither | Instant | Free (regex rules only) |
+
+Set the API key for speed. Remove it and the system falls back to `claude -p`. Remove Claude Code and it runs regex-only rules. `notmuch-ai status` shows which provider is active.
+
+## Alternative LLM models
+
+The default is Anthropic (haiku for classification, sonnet for drafts). To use a different model, set `NOTMUCH_AI_MODEL` to any [litellm-compatible model](https://docs.litellm.ai/docs/providers):
 
 ```bash
 export NOTMUCH_AI_MODEL=gpt-4o-mini    # OpenAI
