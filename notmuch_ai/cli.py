@@ -275,6 +275,19 @@ def rules_check(
 _PAUSE_FLAG = CONFIG_DIR / ".paused"
 
 
+def _render_heatmap(counts: list[int]) -> str:
+    """Render a 5-level density heatmap string from a list of hourly counts.
+
+    Levels: · ░ ▒ ▓ █  (empty → sparse → dense)
+    Scale is relative to the busiest hour so any activity level is readable.
+    """
+    CHARS = "·░▒▓█"
+    max_count = max(counts) if any(counts) else 0
+    if max_count == 0:
+        return CHARS[0] * len(counts)
+    return "".join(CHARS[min(4, round(c / max_count * 4))] for c in counts)
+
+
 @app.command()
 def pause() -> None:
     """Pause AI classification. Survives reboots. Applies immediately on the next mail sync."""
@@ -325,6 +338,12 @@ def status() -> None:
     else:
         provider_status = "[red]none[/red] (static rules only)"
 
+    # --- activity windows + heatmap ---
+    counts_1h  = db.count_classified_window(1)
+    counts_4h  = db.count_classified_window(4)
+    counts_24h = db.count_classified_window(24)
+    heatmap    = _render_heatmap(db.hourly_counts(24))
+
     # --- recent errors ---
     recent_errors = db.count_recent_errors()
 
@@ -339,6 +358,10 @@ def status() -> None:
     rprint(f"  Classified:  {total_classified:,}")
     rprint(f"  Remaining:   {unclassified_remaining:,}")
     rprint(f"  Total:       {total:,}")
+    rprint()
+    rprint(f"  [bold]Activity[/bold]")
+    rprint(f"  1h: {counts_1h:>4}   4h: {counts_4h:>4}   24h: {counts_24h:>4}")
+    rprint(f"  [{heatmap}]  \u2190 now")
     rprint()
     rprint(f"  Rules:       {len(user_rules)} user rules loaded from {RULES_FILE}")
     rprint(f"  Model:       {model}")

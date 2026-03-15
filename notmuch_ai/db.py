@@ -11,7 +11,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -221,6 +221,46 @@ def count_recent_errors() -> int:
             (cutoff,),
         ).fetchone()
     return row[0] if row else 0
+
+
+def count_classified_window(hours: int) -> int:
+    """Return distinct messages classified in the last N hours (non-dry-run).
+
+    Uses Python-generated ISO 8601 cutoff to avoid SQLite datetime() format
+    mismatch with stored timestamps (which use 'T' separator and '+00:00' suffix).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with closing(_conn()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT message_id) FROM decisions WHERE dry_run = 0 AND ts > ?",
+            (cutoff,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def hourly_counts(hours: int = 24) -> list[int]:
+    """Return classification counts per hour for the last N hours, oldest first.
+
+    Returns a list of length `hours`. Each element is the count of distinct
+    messages classified in that UTC hour slot. Empty hours are 0.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with closing(_conn()) as conn:
+        rows = conn.execute(
+            """SELECT strftime('%Y-%m-%d %H', ts) AS hr, COUNT(DISTINCT message_id) AS cnt
+               FROM decisions
+               WHERE dry_run = 0 AND ts > ?
+               GROUP BY hr
+               ORDER BY hr""",
+            (cutoff,),
+        ).fetchall()
+    counts_by_hr = {row[0]: row[1] for row in rows}
+    now = datetime.now(timezone.utc)
+    result = []
+    for i in range(hours - 1, -1, -1):
+        slot = now - timedelta(hours=i)
+        result.append(counts_by_hr.get(slot.strftime("%Y-%m-%d %H"), 0))
+    return result
 
 
 def recent(limit: int = 50) -> list[dict]:

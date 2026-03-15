@@ -5,10 +5,14 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
 import notmuch_ai.db as db_module
 from notmuch_ai.db import (
     Decision, log, why, recent, log_correction, recent_corrections,
     log_triage_review, recent_untriaged,
+    count_classified_window, hourly_counts,
 )
 
 
@@ -202,3 +206,60 @@ def test_recent_untriaged_empty_when_all_reviewed():
         log(_decision(message_id=f"msg{i}"))
         log_triage_review(f"msg{i}", action="skipped")
     assert recent_untriaged(limit=10) == []
+
+
+# ---------------------------------------------------------------------------
+# activity windows + heatmap
+# ---------------------------------------------------------------------------
+
+def _insert_at(ts: str, message_id: str = "msg", dry_run: bool = False) -> None:
+    """Insert a decision row with a specific timestamp (bypasses log() to control ts)."""
+    # Trigger table creation first
+    count_classified_window(1)
+    with sqlite3.connect(db_module.DB_PATH) as conn:
+        conn.execute(
+            """INSERT INTO decisions
+               (ts, message_id, subject, from_addr, rule_name, rule_cond,
+                tags_added, tags_removed, dry_run)
+               VALUES (?, ?, 'S', 'a@b.com', 'r', 'c', '[]', '[]', ?)""",
+            (ts, message_id, 1 if dry_run else 0),
+        )
+
+
+def test_count_classified_window_empty():
+    assert count_classified_window(1) == 0
+    assert count_classified_window(4) == 0
+    assert count_classified_window(24) == 0
+
+
+def test_count_classified_window_counts():
+    now = datetime.now(timezone.utc)
+    _insert_at((now - timedelta(minutes=30)).isoformat(), "recent")       # within 1h
+    _insert_at((now - timedelta(hours=2)).isoformat(), "two-hours")       # within 4h, not 1h
+    _insert_at((now - timedelta(hours=12)).isoformat(), "twelve-hours")   # within 24h, not 4h
+    _insert_at((now - timedelta(hours=25)).isoformat(), "old")            # outside all windows
+    _insert_at((now - timedelta(minutes=10)).isoformat(), "dry", dry_run=True)  # excluded
+
+    assert count_classified_window(1) == 1
+    assert count_classified_window(4) == 2
+    assert count_classified_window(24) == 3
+
+
+def test_hourly_counts_empty():
+    counts = hourly_counts(24)
+    assert len(counts) == 24
+    assert all(c == 0 for c in counts)
+
+
+def test_hourly_counts_with_data():
+    now = datetime.now(timezone.utc)
+    # Both "a" and "b" share the exact current timestamp to guarantee same hour bucket,
+    # regardless of what minute within the hour the test runs.
+    _insert_at(now.isoformat(), "a")
+    _insert_at(now.isoformat(), "b")
+    _insert_at((now - timedelta(hours=25)).isoformat(), "old")   # outside 24h window
+
+    counts = hourly_counts(24)
+    assert len(counts) == 24
+    assert counts[-1] == 2   # current hour bucket has both "a" and "b"
+    assert sum(counts) == 2  # "old" excluded
