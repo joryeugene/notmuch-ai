@@ -13,7 +13,31 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
+
+# Env vars that block nested claude sessions (keephive pattern)
+_BLOCKED_ENV_VARS = {"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}
+
+
+class LLMUnavailableError(Exception):
+    """No LLM provider configured."""
+    pass
+
+
+def _provider() -> str:
+    """Detect available LLM provider. Returns 'anthropic', 'claude-cli', or 'none'."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if shutil.which("claude") or Path.home().joinpath(".local/bin/claude").exists():
+        return "claude-cli"
+    return "none"
+
+
+def llm_available() -> bool:
+    """Check if any LLM provider is available."""
+    return _provider() != "none"
 
 
 @dataclass
@@ -261,16 +285,18 @@ Be direct and professional. Match the tone of the original email."""
 
 
 def _call(prompt: str, model: str | None = None) -> str:
-    """
-    Route to the configured provider via litellm.
-    Falls back to anthropic SDK directly for claude models (more reliable).
-    """
+    """Route to the best available provider."""
     m = model or _model()
+    provider = _provider()
 
-    if m.startswith("claude"):
-        return _call_anthropic(prompt, m)
+    if provider == "anthropic":
+        return _call_anthropic(prompt, m) if m.startswith("claude") else _call_litellm(prompt, m)
+    elif provider == "claude-cli":
+        return _call_claude_cli(prompt, m)
     else:
-        return _call_litellm(prompt, m)
+        raise LLMUnavailableError(
+            "No LLM provider available (set ANTHROPIC_API_KEY or install claude CLI)"
+        )
 
 
 def _call_anthropic(prompt: str, model: str) -> str:
@@ -297,3 +323,21 @@ def _call_litellm(prompt: str, model: str) -> str:
         max_tokens=1024,
     )
     return response.choices[0].message.content or ""  # type: ignore[union-attr,index]
+
+
+def _call_claude_cli(prompt: str, model: str) -> str:
+    """Use claude -p (Claude Code subscription) as LLM backend. Slower but free."""
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if k not in _BLOCKED_ENV_VARS}
+    result = subprocess.run(
+        ["claude", "-p", prompt,
+         "--model", model,
+         "--no-session-persistence",
+         "--output-format", "text",
+         "--tools", ""],
+        capture_output=True, text=True, timeout=120, env=env,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude -p failed: {result.stderr[:200]}")
+    return result.stdout

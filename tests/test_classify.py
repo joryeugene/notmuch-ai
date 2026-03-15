@@ -101,6 +101,41 @@ def test_classify_messages_report_counts(mock_notmuch, mocker):
     assert report.skipped == 2
 
 
+def test_classify_no_llm_reports_static_only(mock_notmuch, mocker):
+    """When no LLM is available, report.static_only is True."""
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=False)
+    mocker.patch("notmuch_ai.classify.notmuch.tag")
+    mocker.patch("notmuch_ai.classify.rules.evaluate", return_value=[])
+    report = classify_messages()
+    assert report.static_only is True
+
+
+def test_classify_with_llm_reports_not_static_only(mock_notmuch, mocker):
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=True)
+    mocker.patch("notmuch_ai.classify.notmuch.tag")
+    mocker.patch("notmuch_ai.classify.rules.evaluate", return_value=[])
+    report = classify_messages()
+    assert report.static_only is False
+
+
+def test_classify_skip_llm_still_runs_static_rules(mock_notmuch, mocker):
+    """When no LLM, static rules still match and apply tags."""
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=False)
+    tag_mock = mocker.patch("notmuch_ai.classify.notmuch.tag")
+    # rules.evaluate is called with skip_llm=True
+    eval_mock = mocker.patch(
+        "notmuch_ai.classify.rules.evaluate",
+        return_value=[
+            RuleMatch("static: github-noise", "static match", TagOp(add=["ai-noise"]), reasoning="matched static pattern"),
+        ],
+    )
+    report = classify_messages(dry_run=False)
+    assert report.tagged == 1
+    assert report.static_only is True
+    # Verify skip_llm=True was passed
+    assert eval_mock.call_args[1]["skip_llm"] is True
+
+
 def test_classify_skips_already_applied_tags(mock_notmuch, mocker):
     """Tags already on the email should not be re-applied."""
     email_with_tag = _email(tags=["inbox", "needs-reply"])

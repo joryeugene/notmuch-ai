@@ -78,6 +78,12 @@ def classify(
         f"Errors: [red]{report.errors}[/red]"
     )
 
+    if report.static_only:
+        rprint(
+            "[yellow]No LLM available — static rules only.[/yellow] "
+            "Set ANTHROPIC_API_KEY or install claude CLI for full classification."
+        )
+
 
 # ---------------------------------------------------------------------------
 # why
@@ -302,14 +308,17 @@ def status() -> None:
     user_rules = load_user_rules()
 
     # --- model / provider ---
+    from notmuch_ai.llm import _provider
     model = os.environ.get("NOTMUCH_AI_MODEL", "claude-haiku-4-5 (default)")
 
-    # --- API key ---
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        key_status = f"[green]set[/green] ({api_key[:8]}...)"
+    provider = _provider()
+    if provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        provider_status = f"[green]Anthropic API[/green] ({api_key[:8]}...)"
+    elif provider == "claude-cli":
+        provider_status = "[yellow]Claude CLI[/yellow] (subscription, slower)"
     else:
-        key_status = "[red]not set[/red] (ANTHROPIC_API_KEY missing)"
+        provider_status = "[red]none[/red] (static rules only)"
 
     # --- recent errors ---
     recent_errors = db.count_recent_errors()
@@ -328,7 +337,7 @@ def status() -> None:
     rprint()
     rprint(f"  Rules:       {len(user_rules)} user rules loaded from {RULES_FILE}")
     rprint(f"  Model:       {model}")
-    rprint(f"  API key:     {key_status}")
+    rprint(f"  Provider:    {provider_status}")
     rprint(f"  Errors (24h): {recent_errors}")
     if paused:
         rprint()

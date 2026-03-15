@@ -20,6 +20,7 @@ class ClassifyReport:
     skipped: int
     errors: int
     paused: bool = False
+    static_only: bool = False
 
 
 def classify_messages(
@@ -39,8 +40,11 @@ def classify_messages(
     if pause_flag.exists():
         return ClassifyReport(processed=0, tagged=0, skipped=0, errors=0, paused=True)
 
+    from notmuch_ai.llm import llm_available
+
     my_email = notmuch.get_user_email()
     my_name = notmuch.get_user_name()
+    has_llm = llm_available()
 
     message_ids = notmuch.search(query, limit=limit)
     processed = 0
@@ -57,6 +61,7 @@ def classify_messages(
                 my_name=my_name,
                 dry_run=dry_run,
                 verbose=verbose,
+                skip_llm=not has_llm,
             )
             if result:
                 tagged += 1
@@ -67,7 +72,10 @@ def classify_messages(
             if verbose:
                 print(f"  ERROR {mid}: {e}")
 
-    return ClassifyReport(processed=processed, tagged=tagged, skipped=skipped, errors=errors)
+    return ClassifyReport(
+        processed=processed, tagged=tagged, skipped=skipped, errors=errors,
+        static_only=not has_llm,
+    )
 
 
 def count_unclassified(query: str = "tag:inbox AND NOT tag:ai-classified") -> int:
@@ -81,6 +89,7 @@ def _classify_one(
     my_name: str,
     dry_run: bool,
     verbose: bool,
+    skip_llm: bool = False,
 ) -> bool:
     """Classify a single message. Returns True if any tags were applied."""
     email = notmuch.show(message_id)
@@ -100,6 +109,7 @@ def _classify_one(
         my_email=my_email,
         my_name=my_name,
         recipient_pos=pos,
+        skip_llm=skip_llm,
     )
 
     # Mark as classified regardless of whether rules matched

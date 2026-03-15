@@ -8,6 +8,7 @@ import pytest
 from notmuch_ai.llm import (
     classify_condition, builtin_classify, _parse_classify_result,
     suggest_rules, DEFAULT_MODEL, DEFAULT_DRAFT_MODEL,
+    _provider, llm_available, LLMUnavailableError, _call,
 )
 
 
@@ -286,3 +287,90 @@ def test_suggest_rules_prompt_contains_corrections(mocker):
     assert "hr@company.com" in prompt
     assert "ai-noise" in prompt
     assert "ai-fyi" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Provider detection
+# ---------------------------------------------------------------------------
+
+def test_provider_returns_anthropic_when_key_set(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+    assert _provider() == "anthropic"
+
+
+def test_provider_returns_claude_cli_when_no_key_but_claude_exists(monkeypatch, mocker):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value="/usr/local/bin/claude")
+    assert _provider() == "claude-cli"
+
+
+def test_provider_returns_none_when_nothing_available(monkeypatch, mocker):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value=None)
+    mocker.patch("notmuch_ai.llm.Path.home", return_value=mocker.MagicMock(
+        joinpath=mocker.MagicMock(return_value=mocker.MagicMock(exists=mocker.MagicMock(return_value=False)))
+    ))
+    assert _provider() == "none"
+
+
+def test_llm_available_true_with_api_key(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert llm_available() is True
+
+
+def test_llm_available_false_when_nothing(monkeypatch, mocker):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value=None)
+    mocker.patch("notmuch_ai.llm.Path.home", return_value=mocker.MagicMock(
+        joinpath=mocker.MagicMock(return_value=mocker.MagicMock(exists=mocker.MagicMock(return_value=False)))
+    ))
+    assert llm_available() is False
+
+
+def test_call_raises_llm_unavailable_when_no_provider(monkeypatch, mocker):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value=None)
+    mocker.patch("notmuch_ai.llm.Path.home", return_value=mocker.MagicMock(
+        joinpath=mocker.MagicMock(return_value=mocker.MagicMock(exists=mocker.MagicMock(return_value=False)))
+    ))
+    with pytest.raises(LLMUnavailableError):
+        _call("test prompt")
+
+
+def test_call_routes_to_claude_cli_when_no_api_key(monkeypatch, mocker):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value="/usr/local/bin/claude")
+    mock_cli = mocker.patch("notmuch_ai.llm._call_claude_cli", return_value='{"answer": "yes"}')
+    _call("test prompt")
+    mock_cli.assert_called_once()
+
+
+def test_call_claude_cli_strips_blocked_env_vars(monkeypatch, mocker):
+    import subprocess
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value="/usr/local/bin/claude")
+
+    mock_run = mocker.patch.object(subprocess, "run")
+    mock_run.return_value = mocker.MagicMock(returncode=0, stdout="response text", stderr="")
+
+    from notmuch_ai.llm import _call_claude_cli
+    _call_claude_cli("test prompt", "claude-haiku-4-5-20251001")
+
+    env_passed = mock_run.call_args[1]["env"]
+    assert "CLAUDECODE" not in env_passed
+    assert "CLAUDE_CODE_ENTRYPOINT" not in env_passed
+
+
+def test_call_claude_cli_timeout(monkeypatch, mocker):
+    import subprocess
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mocker.patch("notmuch_ai.llm.shutil.which", return_value="/usr/local/bin/claude")
+
+    mock_run = mocker.patch.object(subprocess, "run")
+    mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=120)
+
+    from notmuch_ai.llm import _call_claude_cli
+    with pytest.raises(subprocess.TimeoutExpired):
+        _call_claude_cli("test prompt", "claude-haiku-4-5-20251001")
