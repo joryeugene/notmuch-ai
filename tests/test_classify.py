@@ -136,6 +136,46 @@ def test_classify_skip_llm_still_runs_static_rules(mock_notmuch, mocker):
     assert eval_mock.call_args[1]["skip_llm"] is True
 
 
+def test_classify_parallel_matches_sequential(mock_notmuch, mocker):
+    """Parallel mode produces same results as sequential."""
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=True)
+    mocker.patch("notmuch_ai.classify.notmuch.search", return_value=["id1", "id2", "id3"])
+    mocker.patch("notmuch_ai.classify.notmuch.show", return_value=_email())
+    mocker.patch("notmuch_ai.classify.notmuch.tag")
+    mocker.patch(
+        "notmuch_ai.classify.rules.evaluate",
+        return_value=[
+            RuleMatch("built-in: ai-noise", "noise", TagOp(add=["ai-noise"]), reasoning="auto-gen"),
+        ],
+    )
+    report = classify_messages(workers=2)
+    assert report.processed == 3
+    assert report.tagged == 3
+    assert report.errors == 0
+
+
+def test_classify_parallel_handles_errors(mock_notmuch, mocker):
+    """Parallel mode counts errors without crashing."""
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=True)
+    mocker.patch("notmuch_ai.classify.notmuch.search", return_value=["id1", "id2"])
+    mocker.patch("notmuch_ai.classify.notmuch.show", side_effect=[Exception("boom"), _email()])
+    mocker.patch("notmuch_ai.classify.notmuch.tag")
+    mocker.patch("notmuch_ai.classify.rules.evaluate", return_value=[])
+    report = classify_messages(workers=2)
+    assert report.errors == 1
+    assert report.processed == 2
+
+
+def test_classify_parallel_skipped_when_no_llm(mock_notmuch, mocker):
+    """Parallel mode falls back to sequential when no LLM available."""
+    mocker.patch("notmuch_ai.llm.llm_available", return_value=False)
+    mocker.patch("notmuch_ai.classify.notmuch.tag")
+    mocker.patch("notmuch_ai.classify.rules.evaluate", return_value=[])
+    report = classify_messages(workers=3)
+    assert report.static_only is True
+    assert report.processed == 1  # from mock_notmuch fixture (1 message)
+
+
 def test_classify_skips_already_applied_tags(mock_notmuch, mocker):
     """Tags already on the email should not be re-applied."""
     email_with_tag = _email(tags=["inbox", "needs-reply"])

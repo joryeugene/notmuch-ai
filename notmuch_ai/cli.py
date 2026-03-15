@@ -53,18 +53,23 @@ def classify(
     limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Max messages to process."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without applying tags."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show per-message decisions."),
+    workers: int = typer.Option(1, "--workers", "-w", help="Parallel LLM workers for backfill (default: sequential)."),
 ) -> None:
     """Classify messages and apply AI tags (needs-reply, ai-noise, ai-urgent)."""
     if dry_run:
         rprint("[yellow]DRY RUN — no tags will be applied[/yellow]")
 
-    with console.status("Classifying messages..."):
+    if verbose:
         report = classify_mod.classify_messages(
-            query=query,
-            limit=limit,
-            dry_run=dry_run,
-            verbose=verbose,
+            query=query, limit=limit, dry_run=dry_run,
+            verbose=verbose, workers=workers,
         )
+    else:
+        with console.status("Classifying messages..."):
+            report = classify_mod.classify_messages(
+                query=query, limit=limit, dry_run=dry_run,
+                verbose=verbose, workers=workers,
+            )
 
     if report.paused:
         rprint("[yellow]AI classification is paused.[/yellow] Run [cyan]notmuch-ai resume[/cyan] to re-enable.")
