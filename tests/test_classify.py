@@ -6,7 +6,7 @@ import pytest
 
 import notmuch_ai.db as db_module
 from notmuch_ai.notmuch import Email
-from notmuch_ai.classify import classify_messages
+from notmuch_ai.classify import classify_messages, count_pending_new
 from notmuch_ai.rules import RuleMatch, TagOp
 
 
@@ -174,6 +174,25 @@ def test_classify_parallel_skipped_when_no_llm(mock_notmuch, mocker):
     report = classify_messages(workers=3)
     assert report.static_only is True
     assert report.processed == 1  # from mock_notmuch fixture (1 message)
+
+
+def test_count_pending_new(mocker):
+    """count_pending_new returns length of search results for tag:new query."""
+    mocker.patch("notmuch_ai.classify.notmuch.search", return_value=["id1", "id2", "id3"])
+    assert count_pending_new() == 3
+
+
+def test_count_pending_new_empty(mocker):
+    """count_pending_new returns 0 when no pending messages."""
+    mocker.patch("notmuch_ai.classify.notmuch.search", return_value=[])
+    assert count_pending_new() == 0
+
+
+def test_count_pending_new_uses_correct_query(mocker):
+    """count_pending_new passes the right default query to notmuch.search."""
+    search_mock = mocker.patch("notmuch_ai.classify.notmuch.search", return_value=[])
+    count_pending_new()
+    search_mock.assert_called_once_with("tag:new AND NOT tag:ai-classified")
 
 
 def test_classify_skips_already_applied_tags(mock_notmuch, mocker):

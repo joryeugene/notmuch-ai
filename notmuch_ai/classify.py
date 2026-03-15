@@ -94,6 +94,11 @@ def count_unclassified(query: str = "tag:inbox AND NOT tag:ai-classified") -> in
     return len(notmuch.search(query))
 
 
+def count_pending_new(query: str = "tag:new AND NOT tag:ai-classified") -> int:
+    """Return the number of new messages waiting to be classified."""
+    return len(notmuch.search(query))
+
+
 @dataclass
 class _EvalResult:
     message_id: str

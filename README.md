@@ -2,11 +2,28 @@
 
 Your inbox is full of things an LLM already knows what to do with. notmuch-ai does that work. It classifies every incoming email, tags it, and exits. It has no server, no web UI, and no background process.
 
-```
-mbsync  →  notmuch new  →  notmuch-ai classify  →  aerc
-```
-
 Works with aerc, neomutt, himalaya, or any notmuch-based setup. Uses an Anthropic API key for speed (~1s/email), or works with just a Claude Code subscription (no API key needed, ~5-10s/email). Falls back to static regex rules when neither is available.
+
+## How it works
+
+```
+First-time setup:
+  notmuch-ai setup
+    └── configures sync tool, installs post-new hook, creates rules.yaml
+
+Daily (automatic via post-new hook, or run manually):
+  notmuch-ai sync
+    ├── [mbsync -a]          # your IMAP sync tool (if configured)
+    ├── notmuch new          # index new mail
+    ├── classify new mail    # tag:new AND tag:inbox AND NOT tag:ai-classified
+    └── status summary       # new processed, tagged, errors
+
+Check anytime:
+  notmuch-ai status          # pending new, backfill progress, provider, errors
+
+Optional backfill (classify old mail):
+  notmuch-ai classify --limit 500 --workers 3
+```
 
 ## Tags
 
@@ -53,19 +70,30 @@ export ANTHROPIC_API_KEY=sk-ant-...
 notmuch-ai setup
 ```
 
-This creates `~/.config/notmuch-ai/rules.yaml` and appends the five AI virtual folders to your aerc queries file.
+This creates `~/.config/notmuch-ai/rules.yaml`, installs the post-new hook, appends the five AI virtual folders to your aerc queries file, and optionally configures your IMAP sync tool (e.g. `mbsync -a`).
 
 **Verify it works:**
 
 ```bash
-notmuch-ai classify --dry-run --verbose
+notmuch-ai sync --dry-run --verbose
 ```
 
 ---
 
-## Automating with post-new hook
+## Automating mail sync
 
-Add to `~/.mail/.notmuch/hooks/post-new` (after all your existing notmuch tag rules):
+**Option A: `notmuch-ai sync` (recommended)**
+
+Run `notmuch-ai sync` from a cron job, launchd, or your terminal. It chains your IMAP sync tool, `notmuch new`, and classification in one command. Configure your sync tool once during setup:
+
+```bash
+notmuch-ai setup   # prompts: "IMAP sync command (e.g. mbsync -a)"
+notmuch-ai sync    # runs the full pipeline
+```
+
+**Option B: post-new hook (automatic on every `notmuch new`)**
+
+`notmuch-ai setup` installs this hook automatically. To add it manually, append to `~/.mail/.notmuch/hooks/post-new`:
 
 ```bash
 # AI classification: new arrivals only
@@ -124,11 +152,14 @@ notmuch-ai status   # check progress: classified vs remaining
 ## Daily workflow
 
 ```bash
-# Show current state: progress, rules, model, API key
+# Full pipeline: IMAP sync + notmuch new + classify new mail
+notmuch-ai sync
+
+# Show current state: pending new, backfill progress, provider, errors
 notmuch-ai status
 
-# Preview classification without applying any tags
-notmuch-ai classify --dry-run --verbose
+# Preview without applying any tags
+notmuch-ai sync --dry-run --verbose
 
 # Inspect recent decisions
 notmuch-ai log -n 50
@@ -280,7 +311,7 @@ Each component has one job and no dependencies on the others:
 | `triage.py` | interactive review: corrections to rule proposals |
 | `draft.py` | message-id to reply draft text |
 | `db.py` | append-only audit trail and corrections (SQLite) |
-| `cli.py` | Typer CLI, no business logic |
+| `cli.py` | Typer CLI, no business logic; `sync` orchestrates full pipeline |
 
 No component knows about any other. Swap the LLM provider without touching the rules engine. Replace the audit trail without touching classify.
 

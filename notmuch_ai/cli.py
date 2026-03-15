@@ -2,7 +2,8 @@
 CLI entrypoint.
 
 Commands:
-  classify   — classify new messages, apply AI tags
+  sync       — full pipeline: IMAP sync → notmuch new → classify new mail
+  classify   — classify messages and apply AI tags (backfill or custom query)
   why        — explain why a message was tagged
   draft      — generate a reply draft
   rules      — manage and test rules
@@ -19,6 +20,8 @@ import subprocess as _sp
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -27,6 +30,8 @@ from rich import print as rprint
 from notmuch_ai import classify as classify_mod, db, draft as draft_mod
 import notmuch_ai.triage as triage_mod
 from notmuch_ai.rules import load_user_rules, RULES_FILE, CONFIG_DIR
+
+CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 app = typer.Typer(
     name="notmuch-ai",
@@ -88,6 +93,85 @@ def classify(
             "[yellow]No LLM available — static rules only.[/yellow] "
             "Set ANTHROPIC_API_KEY or install claude CLI for full classification."
         )
+
+
+# ---------------------------------------------------------------------------
+# sync
+# ---------------------------------------------------------------------------
+
+def _load_sync_command() -> str | None:
+    """Return the configured IMAP sync command from config.yaml, or None."""
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text()) or {}
+        cmd = data.get("sync_command", "")
+        return cmd.strip() or None
+    except Exception:
+        return None
+
+
+@app.command()
+def sync(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without applying tags."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show per-message decisions."),
+    workers: int = typer.Option(1, "--workers", "-w", help="Parallel LLM workers (default: sequential)."),
+) -> None:
+    """Full mail pipeline: sync tool → notmuch new → classify new mail."""
+    from notmuch_ai import notmuch
+
+    # 1. Run IMAP sync tool if configured (pause does not block this step)
+    sync_cmd = _load_sync_command()
+    if sync_cmd:
+        rprint(f"[dim]Running:[/dim] {sync_cmd}")
+        result = _sp.run(sync_cmd, shell=True)
+        if result.returncode != 0:
+            rprint(f"[red]Sync command failed (exit {result.returncode})[/red]")
+            raise typer.Exit(result.returncode)
+
+    # 2. Index new mail
+    rprint("[dim]Indexing new mail...[/dim]")
+    new_count = notmuch.new()
+    if new_count:
+        rprint(f"[dim]Indexed {new_count} new message(s)[/dim]")
+
+    # 3. Classify new arrivals (idempotent: ai-classified tag prevents double-processing)
+    if dry_run:
+        rprint("[yellow]DRY RUN — no tags will be applied[/yellow]")
+
+    new_query = "tag:new AND tag:inbox AND NOT tag:ai-classified"
+    if verbose:
+        report = classify_mod.classify_messages(
+            query=new_query, dry_run=dry_run, verbose=verbose, workers=workers,
+        )
+    else:
+        with console.status("Classifying new mail..."):
+            report = classify_mod.classify_messages(
+                query=new_query, dry_run=dry_run, verbose=verbose, workers=workers,
+            )
+
+    if report.paused:
+        rprint("[yellow]AI classification is paused.[/yellow] Run [cyan]notmuch-ai resume[/cyan] to re-enable.")
+        return
+
+    # 4. Summary
+    rprint(
+        f"[green]Done.[/green] "
+        f"New: [bold]{report.processed}[/bold]  "
+        f"Tagged: [bold cyan]{report.tagged}[/bold cyan]  "
+        f"No match: {report.skipped}  "
+        f"Errors: [red]{report.errors}[/red]"
+    )
+
+    if report.static_only:
+        rprint(
+            "[yellow]No LLM available — static rules only.[/yellow] "
+            "Set ANTHROPIC_API_KEY or install claude CLI for full classification."
+        )
+
+    remaining = classify_mod.count_unclassified()
+    if remaining > 0:
+        rprint(f"  [dim]Backfill remaining: {remaining:,} — run [cyan]notmuch-ai classify --limit 200[/cyan][/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +394,8 @@ def status() -> None:
     """Show current classification state: progress, rules, model, and API key."""
     paused = _PAUSE_FLAG.exists()
 
-    # --- classified / remaining ---
+    # --- pending new + classified / remaining ---
+    pending_new = classify_mod.count_pending_new()
     total_classified = db.count_classified()
     unclassified_remaining = classify_mod.count_unclassified()
     total = total_classified + unclassified_remaining
@@ -352,6 +437,7 @@ def status() -> None:
     rprint(f"\n[bold]notmuch-ai status[/bold]")
     rprint(f"  State:       {state_str}")
     rprint(f"  Last run:    {last_run_str}")
+    rprint(f"  Pending new: {pending_new:,}")
     rprint()
     rprint(f"  [bold]Backfill progress[/bold]")
     rprint(f"  [{bar}] {pct}%")
@@ -457,8 +543,27 @@ def setup() -> None:
         rprint(f"[yellow]Hook dir not found[/yellow] ({hook_dir}) — create it and add:")
         rprint("  notmuch-ai classify")
 
+    # 4. Sync command (optional)
     rprint()
-    rprint("[bold green]Setup complete.[/bold green] Run [cyan]notmuch-ai classify --dry-run[/cyan] to test.")
+    existing_cmd = _load_sync_command() or ""
+    prompt_text = f"IMAP sync command (e.g. mbsync -a, leave blank to skip)"
+    if existing_cmd:
+        prompt_text += f" [{existing_cmd}]"
+    sync_cmd = typer.prompt(prompt_text, default=existing_cmd or "")
+    if sync_cmd.strip():
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config_data: dict = {}
+        if CONFIG_FILE.exists():
+            config_data = yaml.safe_load(CONFIG_FILE.read_text()) or {}
+        config_data["sync_command"] = sync_cmd.strip()
+        CONFIG_FILE.write_text(yaml.dump(config_data, default_flow_style=False))
+        rprint(f"[green]Saved[/green] {CONFIG_FILE}")
+        rprint(f"  [dim]notmuch-ai sync will run:[/dim] {sync_cmd.strip()} → notmuch new → classify")
+    else:
+        rprint("[dim]No sync command set — notmuch-ai sync will run notmuch new + classify only.[/dim]")
+
+    rprint()
+    rprint("[bold green]Setup complete.[/bold green] Run [cyan]notmuch-ai sync --dry-run[/cyan] to test.")
 
 
 _EXAMPLE_RULES = """\
