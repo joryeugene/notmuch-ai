@@ -211,6 +211,7 @@ def test_triage_no_rule_proposal_with_one_correction(mocker, monkeypatch):
     mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=[_fake_decision()])
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
+    mocker.patch("notmuch_ai.triage.nm.tag")
     mocker.patch("notmuch_ai.triage.db.log_correction")
     suggest_mock = mocker.patch("notmuch_ai.llm.suggest_rules")
     monkeypatch.setattr("sys.stdin", io.StringIO("r\n4\n"))
@@ -227,6 +228,7 @@ def test_triage_proposes_rules_after_two_corrections(mocker, monkeypatch):
     mocker.patch("notmuch_ai.triage.db.recent_untriaged", return_value=decisions)
     mocker.patch("notmuch_ai.triage.db.why", return_value=[])
     mocker.patch("notmuch_ai.triage.nm.show", return_value=_fake_email())
+    mocker.patch("notmuch_ai.triage.nm.tag")
     mocker.patch("notmuch_ai.triage.db.log_correction")
     suggest_mock = mocker.patch("notmuch_ai.triage.suggest_rules", return_value=[])
     # Two corrections: r→4, r→4
