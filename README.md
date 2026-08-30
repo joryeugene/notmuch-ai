@@ -296,6 +296,13 @@ just test-live  # live integration tests (requires ANTHROPIC_API_KEY)
 just dry-run    # classify last 50 inbox messages, print reasoning
 ```
 
+Optionally enable the repository's staged secret scan:
+
+```bash
+mise install
+git config core.hooksPath .githooks
+```
+
 ---
 
 ## Architecture
